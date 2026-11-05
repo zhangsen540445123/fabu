@@ -1,0 +1,17 @@
+/.venv/
+/__pycache__/
+**/__pycache__/
+/.pytest_cache/
+/.ruff_cache/
+/.superpowers/
+/build/
+/dist/
+*.egg-info/
+/node_modules/
+/frontend/node_modules/
+/frontend/dist/
+*.sqlite*
+*.log
+.env
+/data/
+/artifacts/
