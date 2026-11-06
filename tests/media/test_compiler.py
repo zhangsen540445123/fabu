@@ -127,19 +127,6 @@ def test_digest_tracks_semantics_not_display_name(tmp_path):
     )
 
 
-def test_enabled_unimplemented_module_never_silently_skips(tmp_path):
-    from test_baseline import info_fixture
-
-    from fabu.media.compiler import compile_plan
-    from fabu.media.models import InputBundle, PlanInvalid
-
-    with pytest.raises(PlanInvalid, match="not yet available"):
-        compile_plan(
-            InputBundle(source=info_fixture(tmp_path), assets={}),
-            preset([step("trim", {"start_ms": 0, "end_ms": 1000})]),
-        )
-
-
 def test_preset_save_rejects_unknown_raw_or_invalid_output(tmp_path):
     from fabu.assets import AssetStore
     from fabu.presets import PresetStore
@@ -154,3 +141,25 @@ def test_preset_save_rejects_unknown_raw_or_invalid_output(tmp_path):
     ]:
         with pytest.raises(ValueError):
             presets.save_draft(None, doc)
+
+
+def test_unimplemented_registered_module_is_not_silently_skipped(tmp_path):
+    from test_baseline import info_fixture
+
+    from fabu.assets import AssetRef
+    from fabu.media.compiler import compile_plan
+    from fabu.media.models import InputBundle, PlanInvalid
+
+    source = info_fixture(tmp_path)
+    ref = AssetRef(
+        id="intro",
+        sha256=source.sha256,
+        local_path=source.path,
+        media_type="video",
+        size_bytes=source.path.stat().st_size,
+    )
+    with pytest.raises(PlanInvalid, match="not yet available"):
+        compile_plan(
+            InputBundle(source=source, assets={"intro": ref}),
+            preset([step("intro", scope="full", assets=["intro"])]),
+        )

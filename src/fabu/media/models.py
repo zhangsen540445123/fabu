@@ -13,7 +13,7 @@ from fabu.assets import AssetRef
 from fabu.media.geometry import Size
 from fabu.media.probe import MediaInfo
 
-ENGINE_VERSION = "pipeline-2"
+ENGINE_VERSION = "pipeline-3"
 
 
 class PlanInvalid(ValueError):
@@ -62,6 +62,7 @@ class MediaPlan(BaseModel):
     asset_inputs: list[AssetRef] = Field(default_factory=list)
     video_graph: str | None = None
     geometry_summary: dict = Field(default_factory=dict)
+    timing_summary: dict = Field(default_factory=dict)
 
 
 class RenderCommand(BaseModel):

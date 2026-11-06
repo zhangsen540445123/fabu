@@ -9,6 +9,7 @@ from PIL import Image
 from fabu.assets import assert_no_reparse, sha256_file
 from fabu.media.baseline import build_baseline_plan
 from fabu.media.filters_geometry import compile_geometry, contain_size
+from fabu.media.filters_time import compile_timing
 from fabu.media.geometry import Size
 from fabu.media.models import (
     ENGINE_VERSION,
@@ -47,7 +48,10 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
     if not used_assets.issubset(bundle.assets):
         raise PlanInvalid("A required immutable asset is missing")
 
-    if any(step.kind not in {"crop", "flip", "color", "layout"} for step in active):
+    if any(
+        step.kind not in {"crop", "flip", "color", "layout", "trim", "speed", "audio_effects"}
+        for step in active
+    ):
         raise PlanInvalid(
             "Enabled editing modules are not yet available in this implementation stage"
         )
@@ -58,7 +62,9 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
         assert_no_reparse(asset.local_path)
         if asset.media_type != "image" or sha256_file(asset.local_path) != asset.sha256:
             raise PlanInvalid("Decoration asset type or integrity is invalid")
-    if active:
+    timing = compile_timing(bundle.source, active)
+    geometry_steps = [step for step in active if step.kind in {"crop", "flip", "color", "layout"}]
+    if geometry_steps:
         source = bundle.source
         # Convert non-square source pixels before applying user crop coordinates.
         sw = round(Fraction(source.coded_width) * source.sar / 2) * 2
@@ -76,7 +82,7 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
             initial.append("transpose=clock")
         if source.rotation_deg in {90, 270}:
             sw, sh = sh, sw
-        geometry = compile_geometry(active, Size(width=sw, height=sh))
+        geometry = compile_geometry(geometry_steps, Size(width=sw, height=sh))
         finish = [
             "setsar=1",
             "fps=30",
@@ -86,7 +92,7 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
         # Range conversion is an actual scale conversion, not merely changing the output tag.
         if source.color.range == "pc":
             initial.append("scale=in_range=pc:out_range=tv")
-        filters = initial + geometry.video_filters
+        filters = initial + timing.video_filters + geometry.video_filters
         graph = None
         asset_inputs = []
         if geometry.decorations:
@@ -125,6 +131,30 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
                 "asset_inputs": asset_inputs,
                 "video_graph": graph,
                 "geometry_summary": geometry.model_dump(mode="json"),
+            }
+        )
+    if active:
+        stage = plan.stages[0]
+        video_filters = stage.video_filters
+        if not geometry_steps:
+            video_filters = stage.video_filters[:1] + timing.video_filters + stage.video_filters[1:]
+        stage = stage.model_copy(
+            update={
+                "video_filters": video_filters,
+                "audio_filters": stage.audio_filters
+                + timing.audio_filters
+                + timing.main_audio_effects
+                + timing.full_audio_effects,
+            }
+        )
+        plan = plan.model_copy(
+            update={
+                "stages": [stage],
+                "expected_duration_ms": timing.main_duration_ms,
+                "audio_profile": plan.audio_profile.model_copy(
+                    update={"expected_duration": timing.audio_duration}
+                ),
+                "timing_summary": timing.model_dump(mode="json"),
             }
         )
     plan = plan.model_copy(
