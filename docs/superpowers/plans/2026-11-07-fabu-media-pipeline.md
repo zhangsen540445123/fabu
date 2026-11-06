@@ -28,7 +28,7 @@
 
 `D:\auto-deploy\src\fabu\media\probe.py`负责MediaInfo；`D:\auto-deploy\src\fabu\media\models.py`由M03定义MediaPlan/OutputProfile/OutputManifest，M04加入InputBundle并消费F05的StepSpec；compiler只生成计划不启动进程；renderer不自行宣布产物可发布；validator唯一生成已验证OutputManifest。过滤器构建按geometry/time/layers/composition拆分，拒绝通用任意脚本节点。
 
-### M01：ffprobe探测与几何规则
+### Task 1: M01 — ffprobe探测与几何规则
 
 **依赖：** F02/F05。**Files：** `D:\auto-deploy\src\fabu\media\probe.py`、`D:\auto-deploy\src\fabu\media\geometry.py`、`D:\auto-deploy\tests\media\test_probe.py`、`D:\auto-deploy\tests\media\fixtures\probe_cases.json`。
 
@@ -40,7 +40,7 @@
 - [ ] GREEN：同命令PASS，并用带四角文字的合成旋转/SAR短素材做`media`集成测试；没有可用ffprobe不得略过实机验收。
 - [ ] 提交`feat: probe media and preserve display geometry`，只stageFiles及必要包文件。
 
-### M02：YouTube下载与原缩略图
+### Task 2: M02 — YouTube下载与原缩略图
 
 **依赖：** F02/F05、M01。**Files：** `D:\auto-deploy\src\fabu\media\source.py`、`D:\auto-deploy\src\fabu\media\thumbnail.py`、`D:\auto-deploy\tests\media\test_source.py`、`D:\auto-deploy\tests\media\test_thumbnail.py`。
 
@@ -52,7 +52,7 @@
 - [ ] GREEN：同命令PASS；实施时仅在下载范围获得授权后用用户示例做真实下载检查，记录含音频/尺寸/封面且不上传。下载环境阻断时保留失败证据，不切到浏览器会话抓取。
 - [ ] 提交`feat: download a single video and original thumbnail`，仅Files；实际源文件保留仓库外。
 
-### M03：基础转码与成片验证（S2）
+### Task 3: M03 — 基础转码与成片验证（S2）
 
 **依赖：** M01–M02、F04。**Files：** `D:\auto-deploy\src\fabu\media\models.py`、`D:\auto-deploy\src\fabu\media\baseline.py`、`D:\auto-deploy\src\fabu\media\renderer.py`、`D:\auto-deploy\src\fabu\media\validator.py`、`D:\auto-deploy\tests\media\test_baseline.py`、`D:\auto-deploy\tests\media\test_render_recovery.py`。
 
@@ -64,7 +64,7 @@
 - [ ] GREEN：同命令PASS；实际生成同基准区间03:00–03:15（450视频帧），与原验收样片对照；再用完整源视频验证时长/解码/原音与资源占用。编码时长/体积只报告实测，不外推样片压缩比例。
 - [ ] 提交`feat: render and validate baseline media outputs`，限定Files；S2交付是本地成片，不是自动发布。
 
-### M04：步骤模型、顺序校验与计划编译
+### Task 4: M04 — 步骤模型、顺序校验与计划编译
 
 **依赖：** F05、M03。**Files：** 修改`D:\auto-deploy\src\fabu\media\models.py`、`D:\auto-deploy\src\fabu\presets.py`；新建`D:\auto-deploy\src\fabu\media\compiler.py`、`D:\auto-deploy\src\fabu\media\registry.py`、`D:\auto-deploy\tests\media\test_compiler.py`。
 
@@ -76,7 +76,7 @@
 - [ ] GREEN：同命令PASS；M03基础回归不变；拒绝会导致重复输出、跨作用域拖动或裁切尺寸无效的组合。
 - [ ] 提交`feat: compile validated media pipelines`，限定Files；下游新增模块只扩展登记表明确类型。
 
-### M05：裁切、翻转、调色、画布布局
+### Task 5: M05 — 裁切、翻转、调色、画布布局
 
 **依赖：** M04。**Files：** `D:\auto-deploy\src\fabu\media\filters_geometry.py`、`D:\auto-deploy\tests\media\test_geometry_filters.py`，修改`D:\auto-deploy\src\fabu\media\registry.py`。
 
@@ -88,7 +88,7 @@
 - [ ] GREEN：同命令PASS和`media`帧图检查通过；无布局/裁切情况下保持第4节默认无新增边框。
 - [ ] 提交`feat: add explicit frame editing and canvas layouts`，限定Files。
 
-### M06：截取、变速与音频效果
+### Task 6: M06 — 截取、变速与音频效果
 
 **依赖：** M04。**Files：** `D:\auto-deploy\src\fabu\media\filters_time.py`、`D:\auto-deploy\tests\media\test_time_filters.py`，修改登记表。
 
@@ -100,7 +100,7 @@
 - [ ] GREEN：同命令PASS并验证0.5/1/2倍、44.1/48kHz、单/双声道和长片末尾；确认片头片尾速度不受主片速度影响由M08组合测覆盖。
 - [ ] 提交`feat: add synchronized timing and audio controls`，限定Files。
 
-### M07：图片/文字图层与导入字幕
+### Task 7: M07 — 图片/文字图层与导入字幕
 
 **依赖：** M04–M06、F05。**Files：** `D:\auto-deploy\src\fabu\media\filters_layers.py`、`D:\auto-deploy\src\fabu\media\subtitles.py`、`D:\auto-deploy\tests\media\test_layers.py`、`D:\auto-deploy\tests\media\test_subtitles.py`，修改登记表。
 
@@ -112,7 +112,7 @@
 - [ ] GREEN：同命令PASS；渲染并检查图层起止前/中/后帧、透明度和层级，特殊文字必须可见且没有副作用；兼容浏览器代理不替代正式画质样片。
 - [ ] 提交`feat: add safe layers and imported subtitles`，限定Files。
 
-### M08：片头片尾与整片合成
+### Task 8: M08 — 片头片尾与整片合成
 
 **依赖：** M05–M07。**Files：** `D:\auto-deploy\src\fabu\media\composition.py`、`D:\auto-deploy\tests\media\test_composition.py`，修改compiler/registry明确整片阶段。
 
@@ -124,7 +124,7 @@
 - [ ] GREEN：同命令PASS并检查拼接边界前后帧/声音；M03–M07全部回归通过；全片和边界预览时间一致的用例留M09。
 - [ ] 提交`feat: compose intros outros and scoped effects`，限定Files。
 
-### M09：预览确认、缓存与处理快照
+### Task 9: M09 — 预览确认、缓存与处理快照
 
 **依赖：** M08、F04–F05。**Files：** `D:\auto-deploy\src\fabu\media\preview.py`、`D:\auto-deploy\src\fabu\media\service.py`、`D:\auto-deploy\src\fabu\migrations\003_preview_approvals.sql`、`D:\auto-deploy\tests\media\test_preview.py`，修改presets。
 
@@ -136,7 +136,7 @@
 - [ ] GREEN：同命令PASS；处理中修改全局预设不影响当前任务；磁盘不足、预览过期、缺库素材可解释暂停，不自动上传。
 - [ ] 提交`feat: version previews and gate approved processing presets`，限定Files。
 
-### M10：流水线编辑器与本地处理闭环（S4）
+### Task 10: M10 — 流水线编辑器与本地处理闭环（S4）
 
 **依赖：** M09、F06。**Files：** `D:\auto-deploy\src\fabu\api\media.py`、`D:\auto-deploy\src\fabu\api\presets.py`、`D:\auto-deploy\frontend\src\pages\PipelinePage.tsx`、`D:\auto-deploy\frontend\src\components\StepList.tsx`、`D:\auto-deploy\frontend\src\components\StepParameters.tsx`、`D:\auto-deploy\frontend\src\components\PreviewPanel.tsx`、`D:\auto-deploy\frontend\src\pages\NewJobPage.tsx`、`D:\auto-deploy\frontend\src\__tests__\pipeline.test.tsx`、`D:\auto-deploy\frontend\tests\pipeline.spec.ts`、`D:\auto-deploy\tests\test_media_api.py`。
 

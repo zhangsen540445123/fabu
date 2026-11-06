@@ -28,7 +28,7 @@
 
 模板只生产PublishSnapshot；cli_gateway只负责契约与脱敏；coordinator拥有副作用顺序/停止规则；reconcile拥有证据映射。真实CLI命令名/字段只从已核对版本的帮助/schema取得，计划不猜`query groups`就是个人话题组，也不把schema能力当平台实测结果。
 
-### P01：话题、三平台字段与冻结发布快照
+### Task 1: P01 — 话题、三平台字段与冻结发布快照
 
 **依赖：** F03–F05、M03/M09完成后才能接真实成片；提前开发时用严格类型fixture。**Files：** `D:\auto-deploy\src\fabu\publishing\models.py`、`D:\auto-deploy\src\fabu\publishing\topics.py`、`D:\auto-deploy\src\fabu\publishing\templates.py`、`D:\auto-deploy\tests\publishing\test_templates.py`。
 
@@ -40,7 +40,7 @@
 - [ ] GREEN：同命令PASS；三平台共享同一output/title/cover/tags语义，字段格式各自适配；首次SUBMITTING后禁止修改共享快照。
 - [ ] 提交`feat: build verified platform metadata snapshots`，限定Files。
 
-### P02：官方CLI网关、凭证与FakePublisher
+### Task 2: P02 — 官方CLI网关、凭证与FakePublisher
 
 **依赖：** F02–F03、P01。**Files：** `D:\auto-deploy\src\fabu\publishing\gateway.py`、`D:\auto-deploy\src\fabu\publishing\cli_gateway.py`、`D:\auto-deploy\src\fabu\publishing\fake_gateway.py`、`D:\auto-deploy\src\fabu\publishing\permits.py`、`D:\auto-deploy\src\fabu\credentials.py`、`D:\auto-deploy\tests\publishing\test_gateway.py`、`D:\auto-deploy\tests\test_credentials.py`。
 
@@ -52,7 +52,7 @@
 - [ ] GREEN：上述测试PASS；Fake覆盖全部接口，真实网关单测用合成CLI响应；恶意nextCommand/含密钥URL/未知字段不执行不泄漏。
 - [ ] 提交`feat: isolate local publishing gateway and credentials`，限定Files，测试不得实际上传。
 
-### P03：事务发布状态机与对账防重
+### Task 3: P03 — 事务发布状态机与对账防重
 
 **依赖：** F04、P01–P02。**Files：** `D:\auto-deploy\src\fabu\publishing\coordinator.py`、`D:\auto-deploy\src\fabu\publishing\reconcile.py`、`D:\auto-deploy\src\fabu\publishing\permits.py`、`D:\auto-deploy\src\fabu\migrations\004_publish_attempts.sql`、`D:\auto-deploy\tests\publishing\test_coordinator.py`。
 
@@ -64,7 +64,7 @@
 - [ ] GREEN：同命令PASS，覆盖在记录attempt前/后、网络返回前/后逐点崩溃；唯一平台ID/资源ID/账号/时间证据映射，不能同标题猜匹配；首次提交冻结在并发事务中生效。
 - [ ] 提交`feat: coordinate fail-closed publishing and reconciliation`，限定Files。
 
-### P04：账号、发布表单与三平台状态界面（S5）
+### Task 4: P04 — 账号、发布表单与三平台状态界面（S5）
 
 **依赖：** F06、M10、P03。**Files：** `D:\auto-deploy\src\fabu\api\publishing.py`、`D:\auto-deploy\frontend\src\pages\AccountsPage.tsx`、`D:\auto-deploy\frontend\src\components\PublishForm.tsx`、`D:\auto-deploy\frontend\src\components\TargetStatus.tsx`、`D:\auto-deploy\frontend\src\__tests__\publish.test.tsx`、`D:\auto-deploy\frontend\tests\publish-fake.spec.ts`、`D:\auto-deploy\tests\test_publish_api.py`。
 
@@ -76,7 +76,7 @@
 - [ ] GREEN：前端test/typecheck/build和`publish-fake.spec.ts`PASS；注入一成一败一未提交，刷新/重启显示正确；外部真实write请求数0。
 - [ ] 提交`feat: add publishing forms and per-platform status`，限定Files。
 
-### P05：受控上传/立即发布实测（G2第一部分）
+### Task 5: P05 — 受控上传/立即发布实测（G2第一部分）
 
 **依赖：** S4/S5通过、F03报告没有未解决收费风险、用户授权确切媒体/封面/标题/目标账号/立即方式/最大尝试数。**Files：** `D:\auto-deploy\src\fabu\publishing\verification.py`、`D:\auto-deploy\tests\publishing\test_controlled_verification.py`、`D:\auto-deploy\docs\operations\live-verification.md`；必要修改cli_gateway/capabilities，禁止把真实日志或配置加入仓库。
 
@@ -88,7 +88,7 @@
 - [ ] 验收：三个目标分别记录可关联的平台记录、准确元数据/账号/文件/公开状态、真实扣次、失败行为；免费额度不足就停，不自动购买/改日重跑。若HEVC失败，报告并另行确认兼容方案，不暗改H.264。控制程序与用户终端都核对。
 - [ ] 提交`feat: verify controlled immediate publishing evidence`，仅代码/合成测试/脱敏操作文档；实测未完成则任务不打勾，不宣称完整接入。
 
-### P06：平台原生预约实测（G2第二部分）
+### Task 6: P06 — 平台原生预约实测（G2第二部分）
 
 **依赖：** P05、用户单独确认测试媒体/三目标/Asia/Shanghai具体日期时间/次数；预约窗口/扣次信息足够明确。**Files：** `D:\auto-deploy\src\fabu\publishing\schedule.py`、`D:\auto-deploy\tests\publishing\test_schedule.py`，修改verification/reconcile和`D:\auto-deploy\docs\operations\live-verification.md`。
 
@@ -100,7 +100,7 @@
 - [ ] 验收：在授权测试时间观察平台最终结果，区分审核/失败/延迟公开；必要时由用户配合关闭本地程序验证平台托管，不替用户关机。未到测试时间只标“已预约，待公开复核”，不得提前完成本任务。
 - [ ] 提交`feat: verify native scheduling and reconcile final status`，仅代码/合成测试/脱敏文档；按已证实的目标/模式解锁，不外推其他平台。
 
-### P07：安全与可靠性总回归
+### Task 7: P07 — 安全与可靠性总回归
 
 **依赖：** 全部实现任务；真实门槛未过不阻止做本地安全测试，但阻止最终完整验收。**Files：** `D:\auto-deploy\tests\integration\test_security.py`、`D:\auto-deploy\tests\integration\test_recovery.py`、`D:\auto-deploy\frontend\tests\recovery.spec.ts`、`D:\auto-deploy\docs\operations\security-recovery.md`；缺陷修复只改测试对应责任模块。
 
@@ -112,7 +112,7 @@
 - [ ] GREEN：Python非live全量、前端测试/构建/类型、仿真E2E均通过；恢复后未知状态需对账，不自动回到PENDING。真实测试状态按P05/P06证据原样报告。
 - [ ] 提交`test: cover security and recovery across the full workflow`，只stage明确测试/修复/文档文件，形成未解决风险清单。
 
-### P08：Windows启动交付与用户实机验收
+### Task 8: P08 — Windows启动交付与用户实机验收
 
 **依赖：** P07，完整交付还要求P05/P06全部通过。**Files：** `D:\auto-deploy\scripts\start-fabu.ps1`、`D:\auto-deploy\scripts\stop-fabu.ps1`、`D:\auto-deploy\scripts\verify-installation.ps1`、`D:\auto-deploy\src\fabu\launcher.py`、`D:\auto-deploy\tests\test_launcher.py`、`D:\auto-deploy\README.md`、`D:\auto-deploy\docs\operations\acceptance.md`。
 

@@ -28,7 +28,7 @@
 
 F01建立配置与可运行测试包；F02拥有工具/进程接口；F03拥有只读能力报告；F04拥有Job/Attempt领域类型、存储与Worker；F05拥有AssetRef/预设草稿持久化；F06拥有应用入口及基础网页。后续媒体/发布模块只通过这些接口操作状态，不各建第二份队列或数据库。
 
-### F01：可验证的配置与运行环境
+### Task 1: F01 — 可验证的配置与运行环境
 
 **依赖：** 用户确认执行、总计划开工检查。**Files：** 拟建/重建`D:\auto-deploy\pyproject.toml`、`D:\auto-deploy\.gitignore`、`D:\auto-deploy\src\fabu\__init__.py`、`D:\auto-deploy\src\fabu\settings.py`、`D:\auto-deploy\tests\test_settings.py`、`D:\auto-deploy\tests\conftest.py`；锁文件`D:\auto-deploy\requirements.lock.txt`。
 
@@ -40,7 +40,7 @@ F01建立配置与可运行测试包；F02拥有工具/进程接口；F03拥有�
 - [ ] GREEN：重跑该测试文件，预期全部PASS；故意传入公网地址仍被拒绝，运行环境报告不包含凭证。
 - [ ] 提交：仅stage本任务Files，提交`build: add validated local runtime configuration`；记录安装/测试版本，不声称已验证用户端发布。
 
-### F02：进程执行、超时与日志脱敏
+### Task 2: F02 — 进程执行、超时与日志脱敏
 
 **依赖：** F01。**Files：** `D:\auto-deploy\src\fabu\tools.py`、`D:\auto-deploy\src\fabu\redaction.py`、`D:\auto-deploy\tests\test_tools.py`。
 
@@ -52,7 +52,7 @@ F01建立配置与可运行测试包；F02拥有工具/进程接口；F03拥有�
 - [ ] GREEN：重跑该测试，确认符号/中文/超时/子孙进程终止/旁路用户进程保留/日志脱敏全PASS。
 - [ ] 提交`feat: isolate tool processes and redact diagnostics`，只stage上述3个文件。
 
-### F03：蚁小二只读能力清单（G1）
+### Task 3: F03 — 蚁小二只读能力清单（G1）
 
 **依赖：** F02。**Files：** `D:\auto-deploy\src\fabu\publishing\capabilities.py`、`D:\auto-deploy\src\fabu\diagnostics.py`、`D:\auto-deploy\tests\publishing\test_capabilities.py`、`D:\auto-deploy\tests\fixtures\capabilities.json`、`D:\auto-deploy\docs\operations\capability-checklist.md`；新增包目录时一并创建必要`__init__.py`。
 
@@ -64,7 +64,7 @@ F01建立配置与可运行测试包；F02拥有工具/进程接口；F03拥有�
 - [ ] GREEN：同命令PASS；能力清单区分“已证实”“文档声称”“待实际写入”；单测用合成fixture，不提交实际用户响应。
 - [ ] 提交`feat: add evidence-based publishing capability gate`，限定上述Files。若G1发现明确收费硬限制，先报告用户，不自选收费或GUI替代路线。
 
-### F04：持久化任务、串行Worker及崩溃恢复
+### Task 4: F04 — 持久化任务、串行Worker及崩溃恢复
 
 **依赖：** F01–F02。**Files：** `D:\auto-deploy\src\fabu\domain.py`、`D:\auto-deploy\src\fabu\store.py`、`D:\auto-deploy\src\fabu\worker.py`、`D:\auto-deploy\src\fabu\migrations\001_initial.sql`、`D:\auto-deploy\tests\test_jobs.py`。
 
@@ -76,7 +76,7 @@ F01建立配置与可运行测试包；F02拥有工具/进程接口；F03拥有�
 - [ ] GREEN：同命令PASS，另测关闭DB后重开、双启动、模拟崩溃、锁竞争，未丢事件且未重复执行副作用。
 - [ ] 提交`feat: persist jobs and enforce a single worker`，限定Files及必要包文件。
 
-### F05：不可变素材、预设草稿与引用保护
+### Task 5: F05 — 不可变素材、预设草稿与引用保护
 
 **依赖：** F04。**Files：** `D:\auto-deploy\src\fabu\assets.py`、`D:\auto-deploy\src\fabu\presets.py`、`D:\auto-deploy\src\fabu\migrations\002_assets_presets.sql`、`D:\auto-deploy\tests\test_assets.py`。
 
@@ -88,7 +88,7 @@ F01建立配置与可运行测试包；F02拥有工具/进程接口；F03拥有�
 - [ ] GREEN：同命令PASS；移动源文件后现有素材仍能读取；引用库缺失/被外部篡改会检测失败，不默认信任只读标志。
 - [ ] 提交`feat: store versioned assets and preset drafts`，限定Files。
 
-### F06：本地API与基础网页（首个可启动交付）
+### Task 6: F06 — 本地API与基础网页（首个可启动交付）
 
 **依赖：** F03–F05。**Files：** `D:\auto-deploy\src\fabu\api\app.py`、`D:\auto-deploy\src\fabu\api\security.py`、`D:\auto-deploy\src\fabu\api\jobs.py`、`D:\auto-deploy\src\fabu\__main__.py`、`D:\auto-deploy\frontend\package.json`、`D:\auto-deploy\frontend\package-lock.json`、`D:\auto-deploy\frontend\src\App.tsx`、`D:\auto-deploy\frontend\src\pages\JobsPage.tsx`、`D:\auto-deploy\frontend\src\pages\SettingsPage.tsx`、`D:\auto-deploy\frontend\src\api.ts`、`D:\auto-deploy\tests\test_api_security.py`、`D:\auto-deploy\frontend\src\__tests__\jobs.test.tsx`、`D:\auto-deploy\frontend\tests\smoke.spec.ts`；附该任务必需的Vite/TS/Vitest/Playwright配置文件。
 
