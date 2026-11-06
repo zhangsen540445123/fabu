@@ -19,6 +19,7 @@ export interface Settings {
   data_dir: string;
   state_dir: string;
   tools_dir: string;
+  node_path?: string | null;
   bind_host: string;
   test_mode: "local" | "simulation";
   default_preset_version_id: string;
@@ -40,6 +41,14 @@ export interface Capabilities {
 }
 let csrf = "";
 let initialization: Promise<void> | null = null;
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public issues: ValidationIssue[] = [],
+  ) {
+    super(message);
+  }
+}
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
@@ -53,7 +62,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     if (response.status === 401)
       throw new Error("会话未连接，请通过本机启动入口重新打开。");
-    throw new Error(`操作未完成（${response.status}），请检查配置后重试。`);
+    const body = await response.json().catch(() => null);
+    const issues: ValidationIssue[] = body?.detail?.issues ?? [];
+    const message =
+      typeof body?.detail === "string"
+        ? body.detail
+        : `操作未完成（${response.status}），请检查配置后重试。`;
+    throw new ApiError(message, issues);
   }
   return response.json() as Promise<T>;
 }
@@ -88,9 +103,154 @@ export const cancelJob = (job: Job) =>
     body: JSON.stringify({ expected_revision: job.revision }),
   });
 export const saveSettings = (
-  patch: Partial<Pick<Settings, "data_dir" | "tools_dir" | "test_mode">>,
+  patch: Partial<
+    Pick<Settings, "data_dir" | "tools_dir" | "node_path" | "test_mode">
+  >,
 ) =>
   request<Settings>("/api/settings", {
     method: "PUT",
     body: JSON.stringify(patch),
+  });
+
+export interface StepSpec {
+  id: string;
+  kind: string;
+  enabled: boolean;
+  scope: "main" | "full";
+  params: Record<string, unknown>;
+  asset_ids: string[];
+}
+export interface PresetDocument {
+  name: string;
+  schema_version: number;
+  steps: StepSpec[];
+  output: Record<string, unknown>;
+}
+export interface PresetVersion extends PresetDocument {
+  id: string;
+  preset_id: string;
+  revision: number;
+}
+export interface PresetSummary {
+  version: PresetVersion;
+  approved: boolean;
+}
+export interface ValidationIssue {
+  step_id: string;
+  code: string;
+  message: string;
+}
+export interface FieldSchema {
+  type?: string;
+  default?: unknown;
+  enum?: string[];
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  anyOf?: FieldSchema[];
+}
+export interface CatalogStep {
+  kind: string;
+  label: string;
+  scopes: ("main" | "full")[];
+  multiple: boolean;
+  parameters: { properties: Record<string, FieldSchema> };
+}
+export interface Asset {
+  id: string;
+  sha256: string;
+  local_path: string;
+  media_type: "image" | "video" | "font" | "subtitle";
+  size_bytes: number;
+  display_name: string;
+}
+export interface MediaStatus {
+  running: boolean;
+  error_code: string | null;
+  job_id: string | null;
+  operation_id?: string | null;
+  kind?: string | null;
+  percent?: number | null;
+  publishing_enabled: boolean;
+}
+export interface MediaOperation {
+  id: string;
+  job_id: string;
+  state: string;
+  error_code: string | null;
+  result: { preview_id: string } | null;
+}
+export interface Preview {
+  id: string;
+  approved: boolean;
+  clips: {
+    index: number;
+    start_ms: number;
+    end_ms: number;
+    proxy_label: string;
+    proxy_url: string;
+    official_url: string;
+  }[];
+}
+export interface JobPlan {
+  digest: string;
+  output_size: { width: number; height: number };
+  duration_ms: number;
+  preset: PresetVersion;
+  source_manifest: { thumbnail: { id: string } };
+}
+export const getPresets = () => request<PresetSummary[]>("/api/presets");
+export const getCatalog = () => request<CatalogStep[]>("/api/presets/catalog");
+export const getAssets = () => request<Asset[]>("/api/assets");
+export const savePreset = (id: string | null, doc: PresetDocument) =>
+  request<PresetVersion>(id ? `/api/presets/${id}/versions` : "/api/presets", {
+    method: "POST",
+    body: JSON.stringify(doc),
+  });
+export const validatePreset = (doc: PresetDocument) =>
+  request<{ valid: boolean; issues: ValidationIssue[] }>(
+    "/api/presets/validate",
+    { method: "POST", body: JSON.stringify(doc) },
+  );
+export const importAsset = (path: string, media_type: Asset["media_type"]) =>
+  request<Asset>("/api/assets", {
+    method: "POST",
+    body: JSON.stringify({ path, media_type }),
+  });
+export const getMediaStatus = () => request<MediaStatus>("/api/media/status");
+export const getJobPlan = (id: string) =>
+  request<JobPlan>(`/api/jobs/${id}/plan`);
+export const getJobPreviews = (id: string) =>
+  request<MediaOperation[]>(`/api/jobs/${id}/previews`);
+export const createPreview = (job: Job, windows?: [number, number][]) =>
+  request<MediaOperation>("/api/previews", {
+    method: "POST",
+    body: JSON.stringify({
+      job_id: job.id,
+      expected_revision: job.revision,
+      windows,
+    }),
+  });
+export const getOperation = (id: string) =>
+  request<MediaOperation>(`/api/previews/operations/${id}`);
+export const getPreview = (id: string) =>
+  request<Preview>(`/api/previews/${id}`);
+export const approvePreview = (id: string) =>
+  request<{ preview_id: string }>(`/api/previews/${id}/approve`, {
+    method: "POST",
+    body: "{}",
+  });
+export const resumeJob = (job: Job) =>
+  request<Job>(`/api/jobs/${job.id}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: job.revision }),
+  });
+
+export const reviseJob = (job: Job, preset_version_id: string) =>
+  request<Job>(`/api/jobs/${job.id}/revise`, {
+    method: "POST",
+    body: JSON.stringify({
+      expected_revision: job.revision,
+      spec: { ...job.spec, preset_version_id },
+    }),
   });

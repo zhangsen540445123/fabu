@@ -1,19 +1,6 @@
-import pytest
 from fastapi.testclient import TestClient
 
 BASE = "http://127.0.0.1:8765"
-
-
-@pytest.fixture
-def app(tmp_path):
-    from fabu.api.app import create_app
-    from fabu.settings import load_settings
-    from fabu.store import JobStore
-
-    settings = load_settings(
-        {"LOCALAPPDATA": str(tmp_path), "FABU_DATA_DIR": str(tmp_path / "media")}
-    )
-    return create_app(settings, JobStore(settings.db_path))
 
 
 def login(app):

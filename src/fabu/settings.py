@@ -15,6 +15,7 @@ class Settings(BaseModel):
     state_dir: Path
     data_dir: Path
     tools_dir: Path
+    node_path: Path | None = None
     bind_host: Literal["127.0.0.1"] = "127.0.0.1"
     port: int = Field(default=8765, ge=1024, le=65535)
     test_mode: Literal["simulation", "local"] = "simulation"
@@ -32,6 +33,15 @@ class Settings(BaseModel):
                 if not parent.is_dir():
                     raise ValueError("Configured ancestor is not a directory")
                 break
+        return value
+
+    @field_validator("node_path")
+    @classmethod
+    def node_executable(cls, value: Path | None) -> Path | None:
+        if value is not None and (
+            not value.is_absolute() or not value.is_file() or value.suffix.lower() != ".exe"
+        ):
+            raise ValueError("Choose an existing absolute Node.js executable")
         return value
 
     @property
@@ -64,6 +74,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         state_dir=state,
         data_dir=Path(env.get("FABU_DATA_DIR", "D:/FabuData/jobs")),
         tools_dir=Path(env.get("FABU_TOOLS_DIR", str(state / "tools"))),
+        node_path=Path(env["FABU_NODE_PATH"]) if env.get("FABU_NODE_PATH") else None,
         bind_host=env.get("FABU_BIND_HOST", "127.0.0.1"),
         port=env.get("FABU_PORT", "8765"),
         test_mode=env.get("FABU_TEST_MODE", "simulation"),

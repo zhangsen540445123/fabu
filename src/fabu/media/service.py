@@ -111,17 +111,7 @@ class MediaService:
         return self.store.get(job.id)
 
     def get_plan(self, job_id: str) -> MediaPlan:
-        job = self.store.get(job_id)
-        with self.store.connection() as db:
-            row = db.execute(
-                "SELECT plan_json FROM processing_snapshots WHERE job_id=? AND content_revision=?",
-                (job.id, job.content_revision),
-            ).fetchone()
-        if row is None:
-            raise KeyError("Task has no compiled media snapshot")
-        plan = MediaPlan.model_validate_json(row[0])
-        verify_plan_digest(plan)
-        return plan
+        return load_job_plan(self.store, job_id)
 
     def _finish(self, job, output):
         with self.store.transaction() as db:
@@ -232,28 +222,44 @@ class MediaService:
             raise ProcessingPaused(code) from exc
 
     def require_approved_output(self, job: JobSnapshot) -> OutputManifest:
-        current = self.store.get(job.id)
-        if (
-            current.revision != job.revision
-            or current.state != "READY"
-            or not current.output_manifest
-        ):
-            raise PlanInvalid("Task has no current ready media output")
-        plan = self.get_plan(job.id)
-        preset = self.presets.get_version(current.spec.preset_version_id)
-        if plan.engine_version != ENGINE_VERSION or not self.approvals.approval_matches(
-            preset, plan.asset_refs, ENGINE_VERSION
-        ):
-            raise PlanInvalid("The media preset has no compatible preview approval")
-        output = OutputManifest.model_validate(current.output_manifest)
-        if output.plan_digest != plan.digest or current.plan_digest != plan.digest:
-            raise PlanInvalid("Output is not for this frozen processing snapshot")
-        assert_no_reparse(output.path)
-        if (
-            not output.path.is_file()
-            or output.path.stat().st_size != output.size_bytes
-            or sha256_file(output.path) != output.sha256
-        ):
-            raise PlanInvalid("Approved output is missing or changed")
-        validate_metadata(output.media_info, plan)
-        return output
+        return require_approved_job_output(self.store, self.presets, self.approvals, job)
+
+
+def load_job_plan(store: JobStore, job_id: str) -> MediaPlan:
+    job = store.get(job_id)
+    with store.connection() as db:
+        row = db.execute(
+            "SELECT plan_json FROM processing_snapshots WHERE job_id=? AND content_revision=?",
+            (job.id, job.content_revision),
+        ).fetchone()
+    if row is None:
+        raise KeyError("Task has no compiled media snapshot")
+    plan = MediaPlan.model_validate_json(row[0])
+    verify_plan_digest(plan)
+    return plan
+
+
+def require_approved_job_output(
+    store: JobStore, presets: PresetStore, approvals: PreviewApprovalStore, job: JobSnapshot
+) -> OutputManifest:
+    current = store.get(job.id)
+    if current.revision != job.revision or current.state != "READY" or not current.output_manifest:
+        raise PlanInvalid("Task has no current ready media output")
+    plan = load_job_plan(store, job.id)
+    preset = presets.get_version(current.spec.preset_version_id)
+    if plan.engine_version != ENGINE_VERSION or not approvals.approval_matches(
+        preset, plan.asset_refs, ENGINE_VERSION
+    ):
+        raise PlanInvalid("The media preset has no compatible preview approval")
+    output = OutputManifest.model_validate(current.output_manifest)
+    if output.plan_digest != plan.digest or current.plan_digest != plan.digest:
+        raise PlanInvalid("Output is not for this frozen processing snapshot")
+    assert_no_reparse(output.path)
+    if (
+        not output.path.is_file()
+        or output.path.stat().st_size != output.size_bytes
+        or sha256_file(output.path) != output.sha256
+    ):
+        raise PlanInvalid("Approved output is missing or changed")
+    validate_metadata(output.media_info, plan)
+    return output

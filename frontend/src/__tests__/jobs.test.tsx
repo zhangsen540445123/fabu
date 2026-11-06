@@ -6,11 +6,16 @@ const api = vi.hoisted(() => ({
   getJobs: vi.fn(),
   getSettings: vi.fn(),
   getCapabilities: vi.fn(),
+  getPresets: vi.fn(),
+  getMediaStatus: vi.fn(),
   createJob: vi.fn(),
   cancelJob: vi.fn(),
   saveSettings: vi.fn(),
 }));
-vi.mock("../api", () => api);
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...api,
+}));
 const settings = {
   data_dir: "D:/FabuData/jobs",
   state_dir: "C:/Fake/Fabu",
@@ -48,6 +53,26 @@ beforeEach(() => {
   api.initializeSession.mockResolvedValue(undefined);
   api.getJobs.mockResolvedValue([]);
   api.getSettings.mockResolvedValue(settings);
+  api.getPresets.mockResolvedValue([
+    {
+      version: {
+        id: "preset-1",
+        preset_id: "p1",
+        revision: 1,
+        name: "基础2K",
+        schema_version: 1,
+        steps: [],
+        output: { crf: 20 },
+      },
+      approved: false,
+    },
+  ]);
+  api.getMediaStatus.mockResolvedValue({
+    running: false,
+    error_code: null,
+    job_id: null,
+    publishing_enabled: false,
+  });
   api.getCapabilities.mockResolvedValue({
     upload: "UNKNOWN",
     immediate: "UNKNOWN",
@@ -109,7 +134,7 @@ describe("local dashboard", () => {
     const { default: App } = await import("../App");
     render(<App />);
     await screen.findByText("发布未解锁");
-    expect(screen.getByText(/处理引擎接入后/)).toBeVisible();
+    expect(screen.getByText(/处理引擎未启动/)).toBeVisible();
   });
   it("shows actual paths in settings", async () => {
     const { default: App } = await import("../App");

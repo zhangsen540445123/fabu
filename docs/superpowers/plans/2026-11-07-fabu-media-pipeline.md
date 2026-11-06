@@ -142,8 +142,10 @@
 
 **Interfaces：** 认证API `/api/presets`、`/api/presets/{id}/versions`、`/api/assets`、`/api/previews`、`/api/previews/{id}/approve`；GET媒体仅按资源ID验证归属。接口返回后端ValidationIssue，前端不自行解释另一套顺序；JobSpec选择preset_version_id。
 
-- [ ] RED：UI测试`toggle_reorder_save_and_confirm`断言勾选加入、非法拖动给原因且不静默重排、保存新版本需新预览；`base_preset_preserves_audio_and_frame`断言所有附加项关闭；`topics_do_not_select_media_preset`断言改标题不换处理模板；API测试拒绝直接伪造approved字段。运行前端test及Python`test_media_api.py`观察RED。
-- [ ] 实现列表勾选/可拖动或上下移、参数与作用域、素材选择/预设复制、样片播放器/确认、任务当前阶段/错误。单次执行以冻结快照显示；不显示合并过滤器不存在的逐节点进度。
-- [ ] 新任务页面输入URL/标题/预设，选择“仅本地处理”或尚未解锁的发布模式；已有有效预设不每次再确认，待确认任务明确暂停原因。默认原封面，与视频布局图分离。
+- [x] RED：UI测试`toggle_reorder_save_and_confirm`断言勾选加入、非法拖动给原因且不静默重排、保存新版本需新预览；`base_preset_preserves_audio_and_frame`断言所有附加项关闭；`topics_do_not_select_media_preset`断言改标题不换处理模板；API测试拒绝直接伪造approved字段。运行前端test及Python`test_media_api.py`观察RED。
+- [x] 实现列表勾选/可拖动或上下移、参数与作用域、素材选择/预设复制、样片播放器/确认、任务当前阶段/错误。单次执行以冻结快照显示；不显示合并过滤器不存在的逐节点进度。
+- [x] 新任务页面输入URL/标题/预设，选择“仅本地处理”或尚未解锁的发布模式；已有有效预设不每次再确认，待确认任务明确暂停原因。默认原封面，与视频布局图分离。
 - [ ] GREEN：前端test/typecheck/build与`pipeline.spec.ts`端到端通过；用本机真实授权样例演示URL→源→预览→确认→完整成片，发布调用计数必须为0。
-- [ ] 提交`feat: add the configurable media pipeline editor`，限定Files；S4可独立交付本地处理，但完整项目仍需P系列门槛。
+- [x] 提交`feat: add the configurable media pipeline editor`，限定Files；S4可独立交付本地处理，但完整项目仍需P系列门槛。
+
+M10状态说明：实现与合成素材浏览器验收通过，真实YouTube URL→下载链路仍受M02登录验证阻断；上面的完整GREEN验收未达成，不标整项完成。

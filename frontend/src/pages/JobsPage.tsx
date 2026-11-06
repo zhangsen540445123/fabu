@@ -1,8 +1,20 @@
-import { useState } from "react";
-import { cancelJob, createJob, type Job, type Settings } from "../api";
+import { useEffect, useState } from "react";
+import {
+  cancelJob,
+  getJobPlan,
+  resumeJob,
+  reviseJob,
+  type Job,
+  type JobPlan,
+  type MediaStatus,
+  type PresetSummary,
+  type Settings,
+} from "../api";
+import NewJobPage from "./NewJobPage";
+import PreviewPanel from "../components/PreviewPanel";
 const states: Record<string, string> = {
-  NEW: "待处理",
-  INSPECTING: "检查中",
+  NEW: "等待处理",
+  INSPECTING: "检查任务",
   DOWNLOADING: "下载中",
   PROCESSING: "处理中",
   READY: "成片就绪",
@@ -11,63 +23,212 @@ const states: Record<string, string> = {
   FAILED: "失败",
   CANCELED: "已取消",
 };
+const reasons: Record<string, string> = {
+  preview_required: "等待你检查样片并确认预设",
+  source_unavailable: "下载未完成，请检查网络、访问权限与下载工具配置",
+  node_not_configured: "请在运行设置中配置Node.js可执行文件",
+  pipeline_invalid: "处理参数不兼容，请检查截取范围、字幕时刻、素材或字体",
+  render_failed: "成片生成未完成，请检查磁盘空间与素材",
+  processing_snapshot_changed: "处理环境或素材发生变化，请创建新内容版本",
+  processing_canceled: "处理已取消",
+  interrupted_processing: "上次处理被中断，可从已验证阶段重新开始",
+  user_canceled: "用户取消",
+  manual: "手动暂停",
+};
+function JobDetail({
+  job,
+  presets,
+  refresh,
+  onClose,
+}: {
+  job: Job;
+  presets: PresetSummary[];
+  refresh: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [plan, setPlan] = useState<JobPlan | null>(null),
+    [chosen, setChosen] = useState(job.spec.preset_version_id),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    setPlan(null);
+    setChosen(job.spec.preset_version_id);
+    getJobPlan(job.id)
+      .then((value) => {
+        if (alive) setPlan(value);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [job.id, job.state, job.content_revision]);
+  async function changePreset() {
+    setBusy(true);
+    setError("");
+    try {
+      await reviseJob(job, chosen);
+      await refresh();
+      setPlan(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "更换失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+  const versions = presets.map((p) => p.version);
+  if (plan && !versions.some((v) => v.id === plan.preset.id))
+    versions.push(plan.preset);
+  return (
+    <div className="modal-backdrop">
+      <section
+        className="modal detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="detail-title"
+      >
+        <div className="panel-title">
+          <h2 id="detail-title">任务详情 · 内容版本 {job.content_revision}</h2>
+          <button className="quiet" aria-label="关闭任务详情" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <h3>{job.spec.title}</h3>
+        <dl>
+          <dt>状态</dt>
+          <dd>{states[job.state] ?? job.state}</dd>
+          <dt>来源</dt>
+          <dd className="break">{job.spec.source_url}</dd>
+          <dt>处理预设</dt>
+          <dd>
+            {plan
+              ? `${plan.preset.name} · v${plan.preset.revision}`
+              : job.spec.preset_version_id}
+          </dd>
+          <dt>异常原因</dt>
+          <dd>
+            {job.pause_reason
+              ? (reasons[job.pause_reason] ?? job.pause_reason)
+              : "无"}
+          </dd>
+        </dl>
+        {plan && (
+          <div className="source-summary">
+            {plan.source_manifest?.thumbnail && (
+              <img
+                alt="原始YouTube封面"
+                src={`/api/assets/${plan.source_manifest.thumbnail.id}/file`}
+              />
+            )}
+            <div>
+              <strong>
+                {plan.output_size.width} × {plan.output_size.height}
+              </strong>
+              <p>
+                预计时长 {(plan.duration_ms / 1000).toFixed(1)} 秒 ·
+                固定处理快照
+              </p>
+              <small className="break">计划 {plan.digest.slice(0, 16)}</small>
+            </div>
+          </div>
+        )}
+        {job.state === "READY" && (
+          <div className="preset-note">
+            <strong>本地成片已验证</strong>
+            <p>文件完整性、格式和处理快照已检查。尚未上传或发布。</p>
+            <a className="media-link" href={`/api/jobs/${job.id}/output`}>
+              下载已验证成片
+            </a>
+          </div>
+        )}
+        {!job.content_frozen &&
+          ["PAUSED", "FAILED", "READY", "NEW"].includes(job.state) && (
+            <details className="revision-editor">
+              <summary>更换处理预设（创建新内容版本）</summary>
+              <label>
+                新版本处理预设
+                <select
+                  value={chosen}
+                  onChange={(e) => setChosen(e.target.value)}
+                >
+                  {versions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} · v{v.revision}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="secondary"
+                disabled={busy || chosen === job.spec.preset_version_id}
+                onClick={() => void changePreset()}
+              >
+                应用为新内容版本
+              </button>
+              <p>
+                不会修改已经开始提交的内容。修改后重新检查素材与预设确认状态。
+              </p>
+              {error && (
+                <p role="alert" className="error">
+                  {error}
+                </p>
+              )}
+            </details>
+          )}
+        {plan && job.state === "PAUSED" && (
+          <PreviewPanel job={job} refresh={refresh} />
+        )}
+      </section>
+    </div>
+  );
+}
 export default function JobsPage({
   jobs,
   settings,
+  presets,
+  status,
   refresh,
 }: {
   jobs: Job[];
   settings: Settings;
+  presets: PresetSummary[];
+  status: MediaStatus | null;
   refresh: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false),
-    [title, setTitle] = useState(""),
-    [url, setUrl] = useState(""),
+    [selected, setSelected] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [selected, setSelected] = useState<Job | null>(null);
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+    [error, setError] = useState("");
+  const detail = jobs.find((j) => j.id === selected);
+  async function action(job: Job, kind: "cancel" | "resume") {
     setBusy(true);
     setError("");
     try {
-      await createJob({
-        title,
-        source_url: url,
-        preset_version_id: settings.default_preset_version_id,
-        target_ids: [],
-        publish_mode: "local",
-      });
-      setEditing(false);
-      setTitle("");
-      setUrl("");
+      if (kind === "cancel") await cancelJob(job);
+      else await resumeJob(job);
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "保存失败");
+      setError(e instanceof Error ? e.message : "操作失败");
     } finally {
       setBusy(false);
     }
   }
-  async function cancel(job: Job) {
-    setBusy(true);
-    setError("");
-    try {
-      await cancelJob(job);
-      setSelected(null);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "取消失败");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const workerText = !status?.running
+    ? "处理引擎未启动"
+    : status.error_code === "tools_not_configured"
+      ? "处理工具未配置：请设置FFmpeg/ffprobe目录"
+      : status.job_id
+        ? status.kind === "preview"
+          ? "正在生成样片，其他重任务串行等待"
+          : "正在执行本地处理任务"
+        : "处理引擎已就绪，按队列串行运行";
   return (
     <>
       <section className="page-heading">
         <div>
           <span className="eyebrow">WORKSPACE / 工作台</span>
           <h1>每条视频，都有迹可循。</h1>
-          <p>从素材到成片，再到发布。把重复操作交给流程。</p>
+          <p>从下载、样片确认到本地成片，让重复操作按预设执行。</p>
         </div>
         <button className="primary" onClick={() => setEditing(true)}>
           新建任务 <span aria-hidden="true">＋</span>
@@ -76,26 +237,28 @@ export default function JobsPage({
       <div className="metrics">
         <article>
           <span>全部任务</span>
-          <strong>{jobs.length.toString().padStart(2, "0")}</strong>
+          <strong>{String(jobs.length).padStart(2, "0")}</strong>
           <small>本机保存，随时查看</small>
         </article>
         <article>
           <span>待处理</span>
           <strong>
-            {jobs
-              .filter((j) => j.state === "NEW")
-              .length.toString()
-              .padStart(2, "0")}
+            {String(
+              jobs.filter((j) =>
+                ["NEW", "INSPECTING", "DOWNLOADING", "PROCESSING"].includes(
+                  j.state,
+                ),
+              ).length,
+            ).padStart(2, "0")}
           </strong>
-          <small>按队列顺序执行</small>
+          <small>下载、预览、渲染串行运行</small>
         </article>
         <article>
           <span>需要关注</span>
           <strong>
-            {jobs
-              .filter((j) => ["PAUSED", "FAILED"].includes(j.state))
-              .length.toString()
-              .padStart(2, "0")}
+            {String(
+              jobs.filter((j) => ["PAUSED", "FAILED"].includes(j.state)).length,
+            ).padStart(2, "0")}
           </strong>
           <small>异常暂停，不盲目重试</small>
         </article>
@@ -104,7 +267,7 @@ export default function JobsPage({
         <div className="panel-title">
           <div>
             <h2>任务队列</h2>
-            <p>处理引擎接入后，已保存任务才会开始下载与渲染。</p>
+            <p>{workerText}</p>
           </div>
           <button className="quiet" onClick={() => void refresh()}>
             刷新任务
@@ -115,14 +278,14 @@ export default function JobsPage({
             {error}
           </div>
         )}
-        {jobs.length === 0 ? (
+        {!jobs.length ? (
           <div className="empty">
             <span className="empty-icon" aria-hidden="true">
               ▤
             </span>
             <h3>准备好第一条视频了吗？</h3>
             <p>
-              创建本地任务，选择视频链接和标题。
+              填入视频链接与标题，选择处理预设。
               <br />
               目前不会上传或发布任何内容。
             </p>
@@ -148,7 +311,7 @@ export default function JobsPage({
                     <td>
                       <button
                         className="title-button"
-                        onClick={() => setSelected(job)}
+                        onClick={() => setSelected(job.id)}
                       >
                         {job.spec.title}
                       </button>
@@ -156,13 +319,31 @@ export default function JobsPage({
                         {job.id.slice(0, 8)} · 内容版本 {job.content_revision}
                       </small>
                     </td>
-                    <td>基础2K</td>
+                    <td>
+                      {presets.find(
+                        (p) => p.version.id === job.spec.preset_version_id,
+                      )?.version.name ??
+                        `版本 ${job.spec.preset_version_id.slice(0, 8)}`}
+                    </td>
                     <td>
                       <span
                         className={`badge ${job.state === "FAILED" ? "danger" : ""}`}
                       >
                         {states[job.state] ?? job.state}
                       </span>
+                      {job.pause_reason === "preview_required" && (
+                        <small>等待样片确认</small>
+                      )}
+                      {status?.job_id === job.id && status.percent != null && (
+                        <div>
+                          <progress
+                            aria-label="整体渲染进度"
+                            value={status.percent}
+                            max={100}
+                          />
+                          <small>{status.percent.toFixed(1)}%</small>
+                        </div>
+                      )}
                     </td>
                     <td>
                       {job.spec.publish_mode === "local"
@@ -170,15 +351,35 @@ export default function JobsPage({
                         : "仿真"}
                     </td>
                     <td>
-                      <button
-                        className="quiet"
-                        disabled={
-                          busy || job.content_frozen || job.state !== "NEW"
-                        }
-                        onClick={() => void cancel(job)}
-                      >
-                        取消
-                      </button>
+                      <div className="table-actions">
+                        <button
+                          className="quiet"
+                          onClick={() => setSelected(job.id)}
+                        >
+                          查看
+                        </button>
+                        {["PAUSED", "FAILED"].includes(job.state) &&
+                          job.pause_reason !== "preview_required" && (
+                            <button
+                              className="quiet"
+                              disabled={busy || job.content_frozen}
+                              onClick={() => void action(job, "resume")}
+                            >
+                              继续
+                            </button>
+                          )}
+                        <button
+                          className="quiet"
+                          disabled={
+                            busy ||
+                            job.content_frozen ||
+                            ["CANCELED", "PUBLISHING"].includes(job.state)
+                          }
+                          onClick={() => void action(job, "cancel")}
+                        >
+                          取消
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -192,91 +393,21 @@ export default function JobsPage({
         <p>原视频保留 · 附加处理默认关闭 · 参数与素材按版本保存</p>
       </section>
       {editing && (
-        <div className="modal-backdrop">
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="new-title"
-          >
-            <div className="panel-title">
-              <h2 id="new-title">新建本地任务</h2>
-              <button
-                className="quiet"
-                aria-label="关闭新建任务"
-                onClick={() => setEditing(false)}
-              >
-                ×
-              </button>
-            </div>
-            <form onSubmit={submit}>
-              <label>
-                YouTube链接
-                <input
-                  required
-                  type="url"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="https://youtu.be/…"
-                />
-              </label>
-              <label>
-                发布标题
-                <input
-                  required
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="例如：剃须仙人的日常"
-                />
-              </label>
-              <div className="preset-note">
-                <strong>基础2K · 保留原声</strong>
-                <p>
-                  HEVC · CRF20 · 30fps
-                  <br />
-                  不额外裁切、翻转、变速或降噪
-                </p>
-              </div>
-              <p className="muted">只保存本地任务，不会上传或投稿。</p>
-              {error && <p className="error">{error}</p>}
-              <button className="primary wide" disabled={busy}>
-                {busy ? "保存中…" : "保存本地任务"}
-              </button>
-            </form>
-          </section>
-        </div>
-      )}
-      {selected && (
-        <div className="modal-backdrop">
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="detail-title"
-          >
-            <div className="panel-title">
-              <h2 id="detail-title">任务详情</h2>
-              <button
-                className="quiet"
-                aria-label="关闭任务详情"
-                onClick={() => setSelected(null)}
-              >
-                ×
-              </button>
-            </div>
-            <h3>{selected.spec.title}</h3>
-            <dl>
-              <dt>状态</dt>
-              <dd>{states[selected.state] ?? selected.state}</dd>
-              <dt>来源</dt>
-              <dd className="break">{selected.spec.source_url}</dd>
-              <dt>任务ID</dt>
-              <dd className="break">{selected.id}</dd>
-              <dt>异常原因</dt>
-              <dd>{selected.pause_reason ?? "无"}</dd>
-            </dl>
-          </section>
-        </div>
+        <NewJobPage
+          presets={presets}
+          defaultPreset={settings.default_preset_version_id}
+          onClose={() => setEditing(false)}
+          onSaved={refresh}
+        />
+      )}{" "}
+      {detail && (
+        <JobDetail
+          key={detail.id}
+          job={detail}
+          presets={presets}
+          refresh={refresh}
+          onClose={() => setSelected(null)}
+        />
       )}
     </>
   );

@@ -87,3 +87,19 @@ def test_http_image_transport_refuses_untrusted_host():
 
     with pytest.raises(ThumbnailUnavailable):
         HttpImageTransport()("https://example.com/image.jpg")
+
+
+def test_canceled_thumbnail_request_does_not_contact_network(monkeypatch):
+    from threading import Event
+
+    from fabu.media.thumbnail import HttpImageTransport, ThumbnailUnavailable
+
+    cancel = Event()
+    cancel.set()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Canceled request must not start a new HTTP client")
+
+    monkeypatch.setattr("fabu.media.thumbnail.httpx.Client", forbidden)
+    with pytest.raises(ThumbnailUnavailable, match="canceled"):
+        HttpImageTransport(cancel)("https://i.ytimg.com/vi/L6imSiJLd9Q/maxresdefault.jpg")

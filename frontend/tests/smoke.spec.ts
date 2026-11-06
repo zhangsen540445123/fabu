@@ -6,7 +6,7 @@ test("local dashboard persists tasks, blocks external requests, and adapts to na
 }) => {
   const faults: string[] = [];
   page.on("pageerror", (error) => faults.push(error.message));
-  await page.goto("/#bootstrap=synthetic-e2e-bootstrap-not-a-real-credential");
+  await page.goto("/");
   await expect(page.getByText("发布未解锁")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "立即发布", exact: true }),

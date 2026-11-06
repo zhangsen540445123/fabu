@@ -1,42 +1,68 @@
-import { useEffect, useState } from "react";
+import "./styles.css";
+import { useCallback, useEffect, useState } from "react";
 import {
-  getJobs,
-  getSettings,
   getCapabilities,
+  getJobs,
+  getMediaStatus,
+  getPresets,
+  getSettings,
   initializeSession,
-  type Job,
-  type Settings,
   type Capabilities,
+  type Job,
+  type MediaStatus,
+  type PresetSummary,
+  type Settings,
 } from "./api";
 import JobsPage from "./pages/JobsPage";
 import SettingsPage from "./pages/SettingsPage";
-import "./styles.css";
+import PipelinePage from "./pages/PipelinePage";
 export default function App() {
   const [tab, setTab] = useState("jobs"),
     [jobs, setJobs] = useState<Job[]>([]),
     [settings, setSettings] = useState<Settings | null>(null),
     [capabilities, setCapabilities] = useState<Capabilities | null>(null),
+    [presets, setPresets] = useState<PresetSummary[]>([]),
+    [status, setStatus] = useState<MediaStatus | null>(null),
     [error, setError] = useState(""),
     [lastSync, setLastSync] = useState("");
-  async function refresh() {
+  const refreshJobs = useCallback(async () => {
     try {
-      const rows = await getJobs();
+      const [rows, state] = await Promise.all([getJobs(), getMediaStatus()]);
       setJobs(rows);
+      setStatus(state);
       setLastSync(new Date().toLocaleTimeString("zh-CN"));
       setError("");
     } catch {
       setError("与本地服务的连接暂时中断，保留上次同步结果。");
     }
-  }
+  }, []);
+  const refresh = useCallback(async () => {
+    await refreshJobs();
+    try {
+      setPresets(await getPresets());
+    } catch {
+      setError("预设列表刷新失败，请稍后重试。");
+    }
+  }, [refreshJobs]);
   useEffect(() => {
     let alive = true;
     initializeSession()
-      .then(() => Promise.all([getJobs(), getSettings(), getCapabilities()]))
-      .then(([rows, config, caps]) => {
+      .then(() =>
+        Promise.all([
+          getJobs(),
+          getSettings(),
+          getCapabilities(),
+          getPresets(),
+          getMediaStatus(),
+        ]),
+      )
+      .then(([rows, config, caps, templates, state]) => {
         if (alive) {
           setJobs(rows);
           setSettings(config);
           setCapabilities(caps);
+          setPresets(templates);
+          setStatus(state);
           setLastSync(new Date().toLocaleTimeString("zh-CN"));
         }
       })
@@ -47,6 +73,11 @@ export default function App() {
       alive = false;
     };
   }, []);
+  useEffect(() => {
+    if (!settings) return;
+    const timer = setInterval(() => void refreshJobs(), 2000);
+    return () => clearInterval(timer);
+  }, [settings, refreshJobs]);
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -66,8 +97,11 @@ export default function App() {
           >
             <span aria-hidden="true">▤</span>任务工作台
           </button>
-          <button disabled title="将在流水线阶段接入">
-            <span aria-hidden="true">☷</span>处理流水线 <small>开发中</small>
+          <button
+            className={tab === "pipeline" ? "active" : ""}
+            onClick={() => setTab("pipeline")}
+          >
+            <span aria-hidden="true">☷</span>处理流水线
           </button>
           <button
             className={tab === "settings" ? "active" : ""}
@@ -86,7 +120,7 @@ export default function App() {
         <header className="topbar">
           <span>
             工作空间 <span className="slash">/</span>{" "}
-            {tab === "jobs" ? "任务" : "设置"}
+            {tab === "jobs" ? "任务" : tab === "pipeline" ? "流水线" : "设置"}
           </span>
           <span className="local-pill">
             <span className="dot" />
@@ -101,7 +135,15 @@ export default function App() {
           )}
           {settings ? (
             tab === "jobs" ? (
-              <JobsPage jobs={jobs} settings={settings} refresh={refresh} />
+              <JobsPage
+                jobs={jobs}
+                settings={settings}
+                presets={presets}
+                status={status}
+                refresh={refresh}
+              />
+            ) : tab === "pipeline" ? (
+              <PipelinePage onChanged={() => void refresh()} />
             ) : (
               <SettingsPage settings={settings} onSaved={setSettings} />
             )

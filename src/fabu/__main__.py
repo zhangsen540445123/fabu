@@ -20,7 +20,7 @@ def main():
     if args.check:
         print(check_environment(settings).model_dump_json(indent=2))
         return
-    app = create_app(settings, JobStore(settings.db_path))
+    app = create_app(settings, JobStore(settings.db_path), enable_worker=True)
     if args.open_browser:
         url = f"http://127.0.0.1:{settings.port}/#bootstrap={app.state.security.bootstrap_token}"
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()

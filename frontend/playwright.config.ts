@@ -10,10 +10,14 @@ export default defineConfig({
   reporter: "list",
   use: { baseURL: "http://127.0.0.1:8766", trace: "retain-on-failure" },
   projects: [
+    { name: "setup", testMatch: "**/auth.setup.ts" },
     {
       name: "chromium",
+      dependencies: ["setup"],
+      testMatch: "**/*.spec.ts",
       use: {
         ...devices["Desktop Chrome"],
+        storageState: "test-results/auth.json",
         viewport: { width: 1440, height: 1080 },
       },
     },

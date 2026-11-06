@@ -9,13 +9,20 @@ export default function SettingsPage({
 }) {
   const [data, setData] = useState(settings.data_dir),
     [tools, setTools] = useState(settings.tools_dir),
+    [node, setNode] = useState(settings.node_path ?? ""),
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false);
   async function save(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     try {
-      onSaved(await saveSettings({ data_dir: data, tools_dir: tools }));
+      onSaved(
+        await saveSettings({
+          data_dir: data,
+          tools_dir: tools,
+          ...(node ? { node_path: node } : {}),
+        }),
+      );
       setMessage("设置已保存。");
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "保存失败");
@@ -45,8 +52,16 @@ export default function SettingsPage({
               工具目录
               <input value={tools} onChange={(e) => setTools(e.target.value)} />
             </label>
+            <label>
+              Node.js可执行文件
+              <input
+                value={node}
+                onChange={(e) => setNode(e.target.value)}
+                placeholder="选择已安装的node.exe绝对路径"
+              />
+            </label>
             <p className="muted">
-              有任务时不能直接切换媒体目录。工具存在与可用性还需独立核查。
+              工具目录需要包含ffmpeg.exe和ffprobe.exe。YouTube下载另需Node.js；不会自动搜索或安装可执行文件。有任务时不能直接切换媒体目录。
             </p>
             <button className="primary" disabled={busy}>
               保存设置

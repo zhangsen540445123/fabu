@@ -613,3 +613,352 @@ td:first-child {
 .title-button {
   word-break: break-word;
 }
+
+/* Pipeline editing and verified media inspection. */
+select,
+textarea {
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid #d8e1d3;
+  border-radius: 7px;
+  padding: 11px;
+  background: #fcfdfb;
+  color: #293e2d;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #77c6ab;
+  outline-offset: 3px;
+}
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.pipeline-sidebar,
+.pipeline-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+.pipeline-sidebar .padded {
+  padding: 21px;
+}
+.module-list {
+  display: grid;
+  gap: 7px;
+}
+.module-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  text-align: left;
+  background: #f2f6ef;
+  color: #335547;
+  font-size: 13px;
+  border: 1px solid #e3eade;
+}
+.module-button:not(:disabled):hover {
+  background: #e0efdf;
+}
+.module-button span:last-child {
+  font-size: 19px;
+}
+.preset-fields,
+.step-parameters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+}
+.preset-fields label {
+  margin: 0 0 12px;
+}
+.step-parameters label {
+  margin: 8px 0;
+}
+.span-two {
+  grid-column: 1/-1;
+}
+.pipeline-baseline {
+  border-top: 1px solid #e3eade;
+  padding-top: 18px;
+}
+.pipeline-baseline strong {
+  display: block;
+  margin: 12px 0 4px;
+  font-size: 15px;
+}
+.pipeline-baseline p {
+  margin-bottom: 8px;
+}
+.pipeline-baseline details {
+  font-size: 12px;
+  color: #667962;
+}
+.pipeline-baseline details label {
+  max-width: 200px;
+}
+.step-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 14px;
+}
+.step-card {
+  border: 1px solid #dce6d6;
+  border-radius: 12px;
+  background: white;
+  padding: 20px;
+}
+.step-invalid {
+  border-color: #d79b7e;
+}
+.step-disabled {
+  background: #f7f9f4;
+}
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.step-number {
+  border-radius: 8px;
+  background: #edf4e6;
+  color: #55734d;
+  padding: 8px;
+  font-size: 11px;
+}
+.inline-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  margin: 14px 0;
+  font-size: 12px;
+}
+.inline-check input {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  accent-color: #315c47;
+  padding: 0;
+}
+.step-header .inline-check {
+  margin: 0;
+}
+.step-actions {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+.step-actions .quiet {
+  padding: 6px 9px;
+}
+.scope-field {
+  margin: 12px 0;
+  max-width: 300px;
+}
+.pipeline-empty {
+  padding: 50px 25px;
+  border: 1px dashed #c6d6bd;
+  border-radius: 12px;
+  text-align: center;
+  background: #fbfcf9;
+}
+.pipeline-empty > span {
+  font-size: 40px;
+  color: #89a080;
+  display: block;
+  margin-bottom: 15px;
+}
+.pipeline-empty p {
+  margin-bottom: 0;
+}
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pipeline-save p:last-child {
+  margin-bottom: 0;
+  margin-top: 15px;
+}
+.asset-inventory {
+  margin-top: 15px;
+  max-height: 200px;
+  overflow: auto;
+}
+.asset-inventory > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  padding: 8px 0;
+  border-bottom: 1px solid #edf1e8;
+}
+.asset-inventory span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.asset-inventory small {
+  color: #829078;
+}
+.detail-modal {
+  max-width: 800px;
+}
+.source-summary {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  background: #f6f8f3;
+  padding: 16px;
+  border-radius: 9px;
+  margin-bottom: 20px;
+}
+.source-summary img {
+  width: 160px;
+  max-width: 40%;
+  aspect-ratio: 16/9;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.source-summary p {
+  margin: 7px 0;
+}
+.revision-editor {
+  border-top: 1px solid #e1e9da;
+  padding: 18px 0;
+  margin-top: 20px;
+  font-size: 12px;
+  color: #4e6546;
+}
+.revision-editor select {
+  max-width: 500px;
+}
+summary {
+  cursor: pointer;
+}
+.preview-panel {
+  border-top: 1px solid #e1e9da;
+  margin-top: 15px;
+  padding-top: 22px;
+}
+.preview-clips {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0 10px;
+}
+.preview-clips article {
+  border: 1px solid #dce6d6;
+  border-radius: 9px;
+  padding: 13px;
+}
+.preview-clips header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.preview-clips small {
+  color: #7d8d72;
+}
+.preview-clips video {
+  display: block;
+  width: 100%;
+  max-height: 330px;
+  background: #162e27;
+  border-radius: 6px;
+}
+.media-link {
+  display: inline-block;
+  color: #275a3e;
+  font-size: 12px;
+  margin-top: 12px;
+  text-underline-offset: 4px;
+}
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.table-actions .quiet {
+  padding: 6px 8px;
+}
+progress {
+  max-width: 100px;
+  height: 7px;
+  accent-color: #46794c;
+  margin-top: 8px;
+}
+@media (max-width: 1100px) {
+  .pipeline-grid {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .step-header {
+    flex-wrap: wrap;
+  }
+  .step-actions {
+    margin-left: 0;
+  }
+  .pipeline-sidebar .padded {
+    padding: 16px;
+  }
+}
+@media (max-width: 800px) {
+  .pipeline-grid {
+    grid-template-columns: 1fr;
+  }
+  .module-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pipeline-sidebar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .preset-fields,
+  .step-parameters {
+    grid-template-columns: 1fr;
+  }
+  .span-two {
+    grid-column: auto;
+  }
+  .step-card {
+    padding: 16px;
+  }
+  .source-summary {
+    gap: 12px;
+  }
+  .modal-backdrop {
+    padding: 10px;
+  }
+  .detail-modal {
+    padding: 20px;
+  }
+  .step-header {
+    gap: 8px;
+  }
+  .pipeline-save .primary,
+  .pipeline-save .secondary {
+    flex: 1;
+  }
+}
+
+fieldset.pipeline-workspace {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0;
+}

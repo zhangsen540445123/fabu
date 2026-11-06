@@ -1,7 +1,9 @@
 """Local app assembly; application startup does not query accounts, upload, or publish."""
 
+import asyncio
 import os
 import threading
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -13,8 +15,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from fabu.api.jobs import router as jobs_router
+from fabu.api.media import router as media_router
+from fabu.api.presets import router as presets_router
 from fabu.api.security import LocalSecurity
 from fabu.assets import AssetStore
+from fabu.media.approvals import PreviewApprovalStore
+from fabu.media.bootstrap import configured_service
+from fabu.media.controller import MediaController
 from fabu.presets import PresetStore
 from fabu.publishing.capabilities import CapabilityReport
 from fabu.settings import Settings, check_environment
@@ -23,25 +30,46 @@ from fabu.store import JobStore
 
 class SettingsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    node_path: Path | None = None
     data_dir: Path | None = None
     tools_dir: Path | None = None
     test_mode: Literal["local", "simulation"] | None = None
 
 
-def create_app(settings: Settings, store: JobStore) -> FastAPI:
+def create_app(
+    settings: Settings, store: JobStore, *, enable_worker: bool = False, service_factory=None
+) -> FastAPI:
     patch_path = settings.state_dir / "ui-settings.json"
     if patch_path.is_file():
         patch = SettingsPatch.model_validate_json(patch_path.read_text(encoding="utf-8"))
         settings = Settings.model_validate(
             {**settings.model_dump(), **patch.model_dump(exclude_none=True)}
         )
-    app = FastAPI(title="Fabu", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @asynccontextmanager
+    async def lifespan(application):
+        controller = application.state.media_controller
+        if enable_worker:
+            await asyncio.to_thread(controller.start)
+        try:
+            yield
+        finally:
+            if enable_worker:
+                await asyncio.to_thread(controller.stop)
+
+    app = FastAPI(title="Fabu", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.settings = settings
     app.state.settings_lock = threading.Lock()
     app.state.store = store
     app.state.security = LocalSecurity(settings.port)
     app.state.assets = AssetStore(settings.state_dir / "assets", store)
     app.state.presets = PresetStore(store, app.state.assets)
+    app.state.approvals = PreviewApprovalStore(store, app.state.presets, app.state.assets)
+    app.state.media_controller = MediaController(
+        store,
+        service_factory or (lambda cancel: configured_service(app, cancel)),
+        settings.data_dir / "previews",
+    )
     app.state.capabilities = CapabilityReport(checked_at=datetime.now(UTC))
     with store.connection() as db:
         existing = db.execute(
@@ -68,6 +96,8 @@ def create_app(settings: Settings, store: JobStore) -> FastAPI:
     app.state.default_preset = default
     app.middleware("http")(app.state.security.protect)
     app.include_router(jobs_router)
+    app.include_router(presets_router)
+    app.include_router(media_router)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exc: RequestValidationError):
@@ -132,6 +162,7 @@ def create_app(settings: Settings, store: JobStore) -> FastAPI:
             except ValueError as exc:
                 raise HTTPException(422, "Invalid local settings") from exc
             persisted = SettingsPatch(
+                node_path=candidate.node_path,
                 data_dir=candidate.data_dir,
                 tools_dir=candidate.tools_dir,
                 test_mode=candidate.test_mode,
@@ -140,6 +171,8 @@ def create_app(settings: Settings, store: JobStore) -> FastAPI:
             temporary.write_text(persisted.model_dump_json(), encoding="utf-8")
             os.replace(temporary, patch_path)
             app.state.settings = candidate
+            app.state.media_controller.preview_root = candidate.data_dir / "previews"
+            app.state.media_controller.wake()
             return get_settings()
 
     distribution = Path(__file__).parents[3] / "frontend" / "dist"

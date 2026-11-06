@@ -4,6 +4,7 @@ import io
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -50,7 +51,15 @@ def _trusted_url(url: str) -> bool:
 
 
 class HttpImageTransport:
+    def __init__(self, cancel: Event | None = None):
+        self.cancel = cancel
+
+    def _check_cancel(self):
+        if self.cancel is not None and self.cancel.is_set():
+            raise ThumbnailUnavailable("Thumbnail request canceled")
+
     def __call__(self, url: str) -> ImageResponse:
+        self._check_cancel()
         if not _trusted_url(url):
             raise ThumbnailUnavailable("Thumbnail host is not allowed")
         try:
@@ -61,6 +70,7 @@ class HttpImageTransport:
                         raise ThumbnailUnavailable("Unexpected thumbnail redirect")
                     content = bytearray()
                     for chunk in response.iter_bytes():
+                        self._check_cancel()
                         content.extend(chunk)
                         if len(content) > _MAX_BYTES:
                             raise ThumbnailUnavailable("Thumbnail response is too large")
