@@ -7,6 +7,7 @@ export interface JobSpec {
   scheduled_at_utc?: string | null;
 }
 export interface Job {
+  output_manifest?: unknown;
   id: string;
   revision: number;
   content_revision: number;
@@ -254,3 +255,106 @@ export const reviseJob = (job: Job, preset_version_id: string) =>
       spec: { ...job.spec, preset_version_id },
     }),
   });
+export interface PublishAccount {
+  account_id: string;
+  platform: string;
+  nickname: string;
+  active: boolean;
+  category_names: string[];
+}
+export interface AccountCatalogue {
+  scope: "simulation" | "live";
+  live_enabled: boolean;
+  accounts: PublishAccount[];
+  topic_groups: { name: string; tags: string[] }[];
+}
+export interface PublicationDraft {
+  expected_revision: number;
+  scope: "simulation" | "live";
+  mode: "immediate" | "native_schedule";
+  scheduled_at_utc?: string;
+  topic_override: string | null;
+  accounts: {
+    account_id: string;
+    declaration: {
+      origin: "licensed_reuse" | "self_created";
+      statement: string;
+      bilibili_type: "self_produced" | "repost" | null;
+      confirmed: boolean;
+    };
+  }[];
+}
+export interface PublishTarget {
+  account_id: string;
+  platform: string;
+  nickname: string;
+  state: string;
+  can_retry: boolean;
+  category: string[];
+}
+export interface PublishRun {
+  job_id?: string;
+  content_revision?: number;
+  snapshot_digest?: string;
+  scope: string;
+  state: string;
+  mode?: string;
+  scheduled_at_utc?: string | null;
+  reason?: string | null;
+  targets: PublishTarget[];
+  topic?: { group_name: string | null; tags: string[] };
+  can_submit: boolean;
+  can_reconcile: boolean;
+  command?: { state: string; error_code: string | null } | null;
+}
+export const getAccounts = (scope: "simulation" | "live" = "simulation") =>
+  request<AccountCatalogue>(`/api/accounts?scope=${scope}`);
+export const configurePublication = (jobId: string, draft: PublicationDraft) =>
+  request<Job>(`/api/jobs/${jobId}/publication`, {
+    method: "PUT",
+    body: JSON.stringify(draft),
+  });
+export const preflightPublication = (
+  job: Job,
+  scope: "simulation" | "live" = "simulation",
+) =>
+  request<PublishRun>("/api/publish/preflight", {
+    method: "POST",
+    body: JSON.stringify({
+      job_id: job.id,
+      expected_revision: job.revision,
+      scope,
+    }),
+  });
+export const getTargetStatus = (
+  jobId: string,
+  scope: "simulation" | "live" = "simulation",
+) => request<PublishRun>(`/api/jobs/${jobId}/targets?scope=${scope}`);
+export const submitPublication = (jobId: string, digest: string) =>
+  request(`/api/jobs/${jobId}/submit`, {
+    method: "POST",
+    body: JSON.stringify({ snapshot_digest: digest, scope: "simulation" }),
+  });
+export const reconcilePublication = (jobId: string, digest: string) =>
+  request(`/api/jobs/${jobId}/reconcile`, {
+    method: "POST",
+    body: JSON.stringify({ snapshot_digest: digest, scope: "simulation" }),
+  });
+export interface PublishingConnection {
+  configured: boolean;
+  package_root: string | null;
+  live_enabled: boolean;
+}
+export const getPublishingConnection = () =>
+  request<PublishingConnection>("/api/publishing/connection");
+export const savePublishingConnection = (data: {
+  package_root: string;
+  api_key: string;
+  local_client_id: string;
+}) =>
+  request<PublishingConnection>("/api/publishing/connection", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+export const refreshPublishingAccounts = () =>
+  request<{ refreshed: number }>("/api/accounts/refresh", { method: "POST" });

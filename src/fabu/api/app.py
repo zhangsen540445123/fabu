@@ -17,15 +17,20 @@ from pydantic import BaseModel, ConfigDict
 from fabu.api.jobs import router as jobs_router
 from fabu.api.media import router as media_router
 from fabu.api.presets import router as presets_router
+from fabu.api.publishing import coordinator
+from fabu.api.publishing import router as publishing_router
 from fabu.api.security import LocalSecurity
 from fabu.assets import AssetStore
 from fabu.credentials import CredentialStore
+from fabu.diagnostics import ReadOnlyCli
 from fabu.media.approvals import PreviewApprovalStore
 from fabu.media.bootstrap import configured_service
 from fabu.media.controller import MediaController
 from fabu.presets import PresetStore
 from fabu.publishing.capabilities import CapabilityReport
 from fabu.publishing.journal import SqliteUploadJournal
+from fabu.publishing.permits import PermitAuthority
+from fabu.publishing.queue import PublicationQueue
 from fabu.publishing.reconcile import recover_publications
 from fabu.settings import Settings, check_environment
 from fabu.store import JobStore
@@ -69,11 +74,13 @@ def create_app(
     app.state.presets = PresetStore(store, app.state.assets)
     app.state.approvals = PreviewApprovalStore(store, app.state.presets, app.state.assets)
     app.state.credentials = CredentialStore(settings.state_dir / "credentials")
+    app.state.readonly_cli_factory = ReadOnlyCli
 
     def startup_cleanup():
         app.state.credentials.cleanup_stale_sessions()
         SqliteUploadJournal.recover_interrupted(store)
         recover_publications(store)
+        app.state.publication_queue.recover_interrupted()
 
     app.state.media_controller = MediaController(
         store,
@@ -81,6 +88,14 @@ def create_app(
         settings.data_dir / "previews",
         startup_cleanup=startup_cleanup,
     )
+    app.state.publication_authority = PermitAuthority()
+    app.state.publication_queue = PublicationQueue(
+        store,
+        app.state.publication_authority,
+        lambda worker: coordinator(app, worker),
+        app.state.media_controller.wake,
+    )
+    app.state.media_controller.publication_queue = app.state.publication_queue
     app.state.capabilities = CapabilityReport(checked_at=datetime.now(UTC))
     with store.connection() as db:
         existing = db.execute(
@@ -109,6 +124,7 @@ def create_app(
     app.include_router(jobs_router)
     app.include_router(presets_router)
     app.include_router(media_router)
+    app.include_router(publishing_router)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exc: RequestValidationError):

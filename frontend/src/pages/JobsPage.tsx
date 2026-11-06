@@ -12,6 +12,7 @@ import {
 } from "../api";
 import NewJobPage from "./NewJobPage";
 import PreviewPanel from "../components/PreviewPanel";
+import PublishForm from "../components/PublishForm";
 const states: Record<string, string> = {
   NEW: "等待处理",
   INSPECTING: "检查任务",
@@ -22,6 +23,7 @@ const states: Record<string, string> = {
   PAUSED: "已暂停",
   FAILED: "失败",
   CANCELED: "已取消",
+  COMPLETED: "提交处理完成",
 };
 const reasons: Record<string, string> = {
   preview_required: "等待你检查样片并确认预设",
@@ -33,6 +35,10 @@ const reasons: Record<string, string> = {
   processing_canceled: "处理已取消",
   interrupted_processing: "上次处理被中断，可从已验证阶段重新开始",
   user_canceled: "用户取消",
+  target_failed: "某平台提交失败，后续目标已停止",
+  reconcile_required: "提交结果需要对账，不会盲目重投",
+  publication_stage_failed: "发布阶段中断，请检查状态后再继续",
+  interrupted_publication: "上次发布中断，先查看逐平台回执",
   manual: "手动暂停",
 };
 function JobDetail({
@@ -175,7 +181,11 @@ function JobDetail({
               )}
             </details>
           )}
-        {plan && job.state === "PAUSED" && (
+        {!!job.output_manifest &&
+          ["READY", "PAUSED", "PUBLISHING", "COMPLETED", "CANCELED"].includes(
+            job.state,
+          ) && <PublishForm job={job} refresh={refresh} />}
+        {plan && job.state === "PAUSED" && !job.output_manifest && (
           <PreviewPanel job={job} refresh={refresh} />
         )}
       </section>
@@ -220,7 +230,9 @@ export default function JobsPage({
       : status.job_id
         ? status.kind === "preview"
           ? "正在生成样片，其他重任务串行等待"
-          : "正在执行本地处理任务"
+          : status.kind === "publishing"
+            ? "正在执行发布仿真，其他重任务串行等待"
+            : "正在执行本地处理任务"
         : "处理引擎已就绪，按队列串行运行";
   return (
     <>
@@ -346,9 +358,16 @@ export default function JobsPage({
                       )}
                     </td>
                     <td>
-                      {job.spec.publish_mode === "local"
-                        ? "仅本地处理"
-                        : "仿真"}
+                      {
+                        (
+                          {
+                            local: "仅本地处理",
+                            simulation: "本地仿真",
+                            immediate: "立即",
+                            native_schedule: "平台定时",
+                          } as Record<string, string>
+                        )[job.spec.publish_mode]
+                      }
                     </td>
                     <td>
                       <div className="table-actions">
@@ -359,7 +378,8 @@ export default function JobsPage({
                           查看
                         </button>
                         {["PAUSED", "FAILED"].includes(job.state) &&
-                          job.pause_reason !== "preview_required" && (
+                          job.pause_reason !== "preview_required" &&
+                          !job.output_manifest && (
                             <button
                               className="quiet"
                               disabled={busy || job.content_frozen}
@@ -373,7 +393,7 @@ export default function JobsPage({
                           disabled={
                             busy ||
                             job.content_frozen ||
-                            ["CANCELED", "PUBLISHING"].includes(job.state)
+                            ["CANCELED", "COMPLETED"].includes(job.state)
                           }
                           onClick={() => void action(job, "cancel")}
                         >

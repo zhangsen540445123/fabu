@@ -13,6 +13,7 @@ from fabu.media.runtime import MediaTools
 from fabu.media.service import MediaService
 from fabu.media.source import SelectedFormat, SourceManifest
 from fabu.settings import load_settings
+from fabu.publishing.fake_gateway import FakePublisher
 from fabu.store import JobStore
 
 with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
@@ -84,6 +85,9 @@ with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
         )
 
     app = create_app(settings, store, enable_worker=True, service_factory=service_factory)
+    app.state.publication_queue.publisher_factory = lambda authority, cancel: FakePublisher(
+        authority, outcomes=["SUBMITTED", "FAILED", "SUBMITTED"], cancel=cancel
+    )
     source_ref = app.state.assets.import_file(source, "video")
     cover_ref = app.state.assets.import_file(cover, "image")
     app.state.security.bootstrap_token = "synthetic-e2e-bootstrap-not-a-real-credential"

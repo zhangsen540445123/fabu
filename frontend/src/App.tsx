@@ -16,6 +16,7 @@ import {
 import JobsPage from "./pages/JobsPage";
 import SettingsPage from "./pages/SettingsPage";
 import PipelinePage from "./pages/PipelinePage";
+import AccountsPage from "./pages/AccountsPage";
 export default function App() {
   const [tab, setTab] = useState("jobs"),
     [jobs, setJobs] = useState<Job[]>([]),
@@ -104,6 +105,12 @@ export default function App() {
             <span aria-hidden="true">☷</span>处理流水线
           </button>
           <button
+            className={tab === "accounts" ? "active" : ""}
+            onClick={() => setTab("accounts")}
+          >
+            <span aria-hidden="true">◎</span>账号与发布
+          </button>
+          <button
             className={tab === "settings" ? "active" : ""}
             onClick={() => setTab("settings")}
           >
@@ -120,7 +127,13 @@ export default function App() {
         <header className="topbar">
           <span>
             工作空间 <span className="slash">/</span>{" "}
-            {tab === "jobs" ? "任务" : tab === "pipeline" ? "流水线" : "设置"}
+            {tab === "jobs"
+              ? "任务"
+              : tab === "pipeline"
+                ? "流水线"
+                : tab === "accounts"
+                  ? "账号"
+                  : "设置"}
           </span>
           <span className="local-pill">
             <span className="dot" />
@@ -144,6 +157,8 @@ export default function App() {
               />
             ) : tab === "pipeline" ? (
               <PipelinePage onChanged={() => void refresh()} />
+            ) : tab === "accounts" ? (
+              <AccountsPage />
             ) : (
               <SettingsPage settings={settings} onSaved={setSettings} />
             )

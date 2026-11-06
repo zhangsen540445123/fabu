@@ -16,7 +16,7 @@ _TRANSITIONS = {
     "DOWNLOADING": {"PROCESSING", "PAUSED", "FAILED", "CANCELED"},
     "PROCESSING": {"READY", "PAUSED", "FAILED", "CANCELED"},
     "READY": {"PUBLISHING", "PAUSED", "FAILED", "CANCELED"},
-    "PUBLISHING": {"PAUSED", "FAILED"},
+    "PUBLISHING": {"PAUSED", "FAILED", "CANCELED"},
     "PAUSED": {"NEW", "FAILED", "CANCELED"},
     "FAILED": {"NEW", "CANCELED"},
     "CANCELED": set(),
@@ -169,6 +169,18 @@ class JobStore:
             job = self._snapshot(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
             if job.revision != expected_revision:
                 raise StaleRevision("Task changed; reload before updating")
+            if (
+                next_state == "NEW"
+                and db.execute(
+                    "SELECT 1 FROM target_attempts a JOIN publication_attempt_links l "
+                    "ON l.attempt_id=a.id "
+                    "WHERE a.job_id=? AND a.state IN ('SUBMITTING','PROVIDER_ACCEPTED','UNKNOWN')",
+                    (job_id,),
+                ).fetchone()
+            ):
+                raise FrozenContent(
+                    "Publication outcome requires reconciliation before resuming media"
+                )
             if next_state not in _TRANSITIONS[job.state]:
                 raise InvalidTransition(f"Cannot transition {job.state} to {next_state}")
             if job.content_frozen and next_state in {"NEW", "CANCELED"}:
@@ -207,6 +219,13 @@ class JobStore:
                 raise FrozenContent("Shared content is frozen after a possible submission")
             if job.revision != expected_revision:
                 raise StaleRevision("Task changed; reload before editing")
+            if db.execute(
+                "SELECT 1 FROM target_attempts a JOIN publication_attempt_links l "
+                "ON l.attempt_id=a.id "
+                "WHERE a.job_id=? AND a.state IN ('SUBMITTING','PROVIDER_ACCEPTED','UNKNOWN')",
+                (job_id,),
+            ).fetchone():
+                raise FrozenContent("Reconcile unknown publication before editing content")
             if job.owner_worker_id or job.state in {"INSPECTING", "DOWNLOADING", "PROCESSING"}:
                 raise InvalidTransition("Pause active processing before creating a revision")
             revision = job.content_revision + 1

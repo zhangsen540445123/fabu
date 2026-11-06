@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -79,6 +80,21 @@ class ReadOnlyCli:
             return {"unavailable": True}
         if operation not in _OPERATIONS:
             raise ValueError("Operation is not an allowed read-only query")
+        return normalize_readonly(
+            operation, self._execute(_OPERATIONS[operation], operation != "version")
+        )
+
+    def categories(self, account_id: str) -> dict:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", account_id):
+            raise ValueError("Invalid stable account identifier")
+        raw = self._execute(
+            ["query", "categories", account_id, "--type", "video", "--paths", "--json"], True
+        )
+        if raw.get("ok") is not True or not isinstance(raw.get("data"), dict):
+            raise ValueError("Category query did not return canonical evidence")
+        return raw["data"]
+
+    def _execute(self, args, needs_config):
         if self.executable is None:
             raise ValueError("CLI executable not configured")
         env = {
@@ -88,13 +104,13 @@ class ReadOnlyCli:
         }
         env["YIXIAOER_PROJECT_DIR"] = str(self.project_dir)
         env["YIXIAOER_API_URL"] = "https://www.yixiaoer.cn/api"
-        if operation != "version":
+        if needs_config:
             if self.config is None or not self.config.is_file():
                 raise ValueError("A known local CLI config is required for account/schema queries")
             env["YIXIAOER_CONFIG"] = str(self.config)
         spec = CommandSpec(
             executable=self.executable,
-            args=_OPERATIONS[operation],
+            args=args,
             cwd=self.project_dir,
             env=env,
             timeout_s=30,
@@ -102,4 +118,7 @@ class ReadOnlyCli:
         result = run_command(spec, threading.Event())
         if result.exit_code != 0 or result.timed_out or result.output_limit_exceeded:
             raise RuntimeError("CLI read-only query did not complete successfully")
-        return normalize_readonly(operation, json.loads(result.stdout.decode("utf-8-sig")))
+        raw = json.loads(result.stdout.decode("utf-8-sig"))
+        if not isinstance(raw, dict):
+            raise ValueError("CLI response must be an object")
+        return raw

@@ -24,6 +24,7 @@ class MediaController:
         startup_cleanup: Callable[[], None] | None = None,
     ):
         self.startup_cleanup = startup_cleanup
+        self.publication_queue = None
         self.store, self.service_factory, self.preview_root = store, service_factory, preview_root
         self._lock = threading.Lock()
         self._wake = threading.Event()
@@ -83,8 +84,10 @@ class MediaController:
             return (
                 db.execute(
                     "SELECT 1 FROM media_operations WHERE job_id=? "
+                    "AND state IN ('QUEUED','RUNNING') UNION ALL "
+                    "SELECT 1 FROM publication_commands WHERE job_id=? "
                     "AND state IN ('QUEUED','RUNNING')",
-                    (job_id,),
+                    (job_id, job_id),
                 ).fetchone()
                 is not None
             )
@@ -108,8 +111,10 @@ class MediaController:
             ):
                 raise ValueError("Task changed before preview enqueue")
             if db.execute(
-                "SELECT 1 FROM media_operations WHERE job_id=? AND state IN ('QUEUED','RUNNING')",
-                (job.id,),
+                "SELECT 1 FROM media_operations WHERE job_id=? AND state IN ('QUEUED','RUNNING') "
+                "UNION ALL SELECT 1 FROM publication_commands WHERE job_id=? "
+                "AND state IN ('QUEUED','RUNNING')",
+                (job.id, job.id),
             ).fetchone():
                 raise ValueError("Task already has a preview queued")
             if (
@@ -229,6 +234,10 @@ class MediaController:
                         if self._stop.is_set():
                             break
                         self._cancel = threading.Event()
+                    if self.publication_queue and self.publication_queue.process_next(
+                        worker, self._cancel, self._set
+                    ):
+                        continue
                     try:
                         service = self.service_factory(self._cancel)
                     except (ValueError, OSError):
