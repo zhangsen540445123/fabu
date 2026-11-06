@@ -130,11 +130,11 @@
 
 **Interfaces：** `build_preview(plan: MediaPlan, windows: list[tuple[int,int]]) -> PreviewManifest`；`approve_preview(manifest: PreviewManifest) -> PreviewApproval`；`approval_matches(preset: PresetVersion, assets: dict[str,AssetRef], engine_compat_version: str) -> bool`；`process_job(job: JobSnapshot) -> OutputManifest`。审批绑定预设/素材/输出/引擎，不把样例源摘要要求应用于所有后续源。
 
-- [ ] RED：`test_preview_is_same_plan_window`比较正文/片头/图层出现边界与全片对应帧；`test_changed_asset_or_output_invalidates_approval`断言旧确认不能放行；`test_new_valid_source_reuses_approval`换合规源仍True；`test_new_source_out_of_range_pauses`越界不自动截短；`test_unapproved_output_cannot_enter_publish`拦截发布。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_preview.py' -q`观察RED。
-- [ ] 实现默认正文15秒、可选区间，额外覆盖片头片尾和定时层关键边界；取样基于最终成片时间轴，不能先截源片导致字幕错时。代理视频带“观看代理”标识，正式HEVC样片保留。
-- [ ] 缓存键=源/素材摘要+计划+引擎版本+窗口；读取前检查产物摘要/存在性。编辑预设生成新版本；任务开始冻结快照；失败恢复重跑未完成阶段，不把旧cache或半文件提升为新输出。
-- [ ] GREEN：同命令PASS；处理中修改全局预设不影响当前任务；磁盘不足、预览过期、缺库素材可解释暂停，不自动上传。
-- [ ] 提交`feat: version previews and gate approved processing presets`，限定Files。
+- [x] RED：`test_preview_is_same_plan_window`比较正文/片头/图层出现边界与全片对应帧；`test_changed_asset_or_output_invalidates_approval`断言旧确认不能放行；`test_new_valid_source_reuses_approval`换合规源仍True；`test_new_source_out_of_range_pauses`越界不自动截短；`test_unapproved_output_cannot_enter_publish`拦截发布。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_preview.py' -q`观察RED。
+- [x] 实现默认正文15秒、可选区间，额外覆盖片头片尾和定时层关键边界；取样基于最终成片时间轴，不能先截源片导致字幕错时。代理视频带“观看代理”标识，正式HEVC样片保留。
+- [x] 缓存键=源/素材摘要+计划+引擎版本+窗口；读取前检查产物摘要/存在性。编辑预设生成新版本；任务开始冻结快照；失败恢复重跑未完成阶段，不把旧cache或半文件提升为新输出。
+- [x] GREEN：同命令PASS；处理中修改全局预设不影响当前任务；磁盘不足、预览过期、缺库素材可解释暂停，不自动上传。
+- [x] 提交`feat: version previews and gate approved processing presets`，限定Files。
 
 ### Task 10: M10 — 流水线编辑器与本地处理闭环（S4）
 

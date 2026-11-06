@@ -4,6 +4,7 @@ import os
 from datetime import UTC, datetime
 from fractions import Fraction
 from pathlib import Path
+from threading import Event
 
 from fabu.assets import assert_no_reparse, sha256_file
 from fabu.media.models import MediaPlan, OutputManifest, verify_plan_digest
@@ -50,13 +51,21 @@ def validate_metadata(info: MediaInfo, plan: MediaPlan) -> None:
         raise OutputInvalid("Output start timestamps are not normalized")
 
 
-def validate_output(candidate: Path, plan: MediaPlan, *, tools: MediaTools) -> OutputManifest:
+def validate_output(
+    candidate: Path, plan: MediaPlan, *, tools: MediaTools, cancel: Event | None = None
+) -> OutputManifest:
+    if cancel is not None and cancel.is_set():
+        raise OutputInvalid("Output validation canceled")
+
+    def probe(args):
+        return tools.probe(args, cancel)
+
     assert_no_reparse(candidate)
     if candidate == plan.source.path or candidate.samefile(plan.source.path):
         raise OutputInvalid("The source cannot be treated as a newly processed output")
-    info = probe_media(candidate, tools.probe)
+    info = probe_media(candidate, probe)
     validate_metadata(info, plan)
-    frames = scan_frame_geometry(info, tools.probe)
+    frames = scan_frame_geometry(info, probe)
     if abs(frames - round(Fraction(plan.expected_duration_ms * 30, 1000))) > 2:
         raise OutputInvalid("Decoded video frame count differs from the planned timeline")
     result = tools.ffmpeg(
@@ -77,7 +86,8 @@ def validate_output(candidate: Path, plan: MediaPlan, *, tools: MediaTools) -> O
             "-f",
             "null",
             "-",
-        ]
+        ],
+        cancel,
     )
     if result.exit_code or result.stderr.strip() or result.timed_out or result.canceled:
         raise OutputInvalid("The complete video/audio decode failed")

@@ -88,6 +88,7 @@ def compile_layers(
     for step in steps:
         if not step.enabled:
             continue
+        boundaries = []
         if step.kind == "image_layer":
             p = ImageParams.model_validate(step.params)
             if len(step.asset_ids) != 1:
@@ -96,6 +97,7 @@ def compile_layers(
             end = scope_duration_ms if p.end_ms is None else p.end_ms
             if end > scope_duration_ms or p.start_ms >= end:
                 raise PlanInvalid("Layer timing exceeds scope")
+            boundaries = [p.start_ms, end]
             with Image.open(asset.local_path) as image:
                 width = int(canvas.width * p.width) // 2 * 2
                 height = round(width * image.height / image.width / 2) * 2
@@ -124,11 +126,14 @@ def compile_layers(
             end = scope_duration_ms if p.end_ms is None else p.end_ms
             if end > scope_duration_ms or p.start_ms >= end:
                 raise PlanInvalid("Text timing exceeds scope")
+            boundaries = [p.start_ms, end]
             add_text(p.text, p.font_id, p.font_size, p.color, p.opacity, p.x, p.y, p.start_ms, end)
         elif step.kind == "subtitles":
             p = SubtitleParams.model_validate(step.params)
             subtitle = check_asset(p.subtitle_id, "subtitle")
-            for cue in parse_srt(subtitle.local_path, scope_duration_ms):
+            cues = parse_srt(subtitle.local_path, scope_duration_ms)
+            boundaries = [cues[0].start_ms, cues[-1].end_ms]
+            for cue in cues:
                 add_text(
                     cue.text,
                     p.font_id,
@@ -142,7 +147,14 @@ def compile_layers(
                 )
         else:
             raise PlanInvalid("Unrecognized layer operation")
-        summary.append({"step_id": step.id, "kind": step.kind, "scope": step.scope})
+        summary.append(
+            {
+                "step_id": step.id,
+                "kind": step.kind,
+                "scope": step.scope,
+                "boundaries_ms": boundaries,
+            }
+        )
     graph.append(f"[{current}]null[{output_label}]")
     return LayerResult(
         graph=";".join(graph),
