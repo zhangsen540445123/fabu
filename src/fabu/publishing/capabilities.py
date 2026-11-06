@@ -13,6 +13,7 @@ class ScheduleWindow(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     earliest_utc: datetime
     latest_utc: datetime
+    minimum_lead_seconds: int = Field(default=0, strict=True, ge=0)
 
     @model_validator(mode="after")
     def valid_window(self):

@@ -567,3 +567,31 @@ def test_unknown_cached_resource_lifetime_cannot_be_reused(verification_context)
     assert service.resource_reusable(gate, permit, snapshot, receipt)
     authority.clock = lambda: permit.expires_at + timedelta(days=2)
     assert not service.resource_reusable(gate, permit, snapshot, receipt)
+
+
+def test_verification_cannot_claim_more_operations_than_permit(verification_context):
+    service, authority, snapshot, old = verification_context
+    permit = authority.issue(
+        snapshot,
+        kind="controlled_test",
+        expires_at=old.expires_at,
+        max_uploads=0,
+        max_submissions_per_target=0,
+        authorization_note="No writes permitted; synthetic negative test",
+    )
+    context = (service, authority, snapshot, permit)
+    ids = [service.record(permit, snapshot, v) for v in complete_evidence(context)]
+    result = service.verify_controlled_run(permit, snapshot, ids)
+    assert not service.grant_production_mode(result, list(permit.target_ids), "immediate")
+
+
+def test_approval_from_another_verifier_process_is_not_a_grant(verification_context):
+    from fabu.publishing.verification import VerificationService
+
+    service, authority, snapshot, permit = verification_context
+    ids = [service.record(permit, snapshot, v) for v in complete_evidence(verification_context)]
+    result = service.verify_controlled_run(permit, snapshot, ids)
+    assert service.grant_production_mode(result, list(permit.target_ids), "immediate")
+    assert not VerificationService(service.store, authority).grant_production_mode(
+        result, list(permit.target_ids), "immediate"
+    )

@@ -61,14 +61,31 @@ def persist_receipt(store, attempt, snapshot, scope, receipt, *, from_reconcile=
     now = datetime.now(UTC).isoformat()
     with store.transaction() as db:
         current = db.execute(
-            "SELECT state FROM target_attempts WHERE id=?", (attempt.id,)
+            "SELECT a.state,l.receipt_json FROM target_attempts a "
+            "JOIN publication_attempt_links l ON a.id=l.attempt_id WHERE a.id=?",
+            (attempt.id,),
         ).fetchone()
         if current is None:
             raise ValueError("Attempt disappeared")
-        if current["state"] in PROVEN and checked.state not in PROVEN:
-            return (
-                checked  # never downgrade already proven content due to an inconclusive later query
-            )
+        if current["state"] in PROVEN:
+            if checked.state == "FAILED" and current["receipt_json"]:
+                previous = SubmissionReceipt.model_validate_json(current["receipt_json"])
+                if (
+                    not checked.platform_content_id
+                    or checked.platform_content_id != previous.platform_content_id
+                ):
+                    return checked
+                # A platform rejection after accepted/scheduled content does not prove that no
+                # submission occurred. Record the failure, but never authorize another submit.
+                checked = checked.model_copy(update={"definitely_not_submitted": False})
+            elif checked.state not in PROVEN:
+                return checked  # keep proven content on inconclusive later query
+            elif {"SUBMITTED": 1, "SCHEDULED": 2, "PUBLISHED": 3}[checked.state] < {
+                "SUBMITTED": 1,
+                "SCHEDULED": 2,
+                "PUBLISHED": 3,
+            }[current["state"]]:
+                return checked
         db.execute(
             "UPDATE target_attempts SET state=?,provider_task_id=?,updated_at=? WHERE id=?",
             (checked.state, checked.provider_task_id, now, attempt.id),

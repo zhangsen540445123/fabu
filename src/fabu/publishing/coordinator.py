@@ -19,6 +19,7 @@ from fabu.publishing.reconcile import (
     recover_publications,
     release_unused_claims,
 )
+from fabu.publishing.schedule import validate_schedule
 from fabu.publishing.templates import build_publish_snapshot
 
 
@@ -338,16 +339,18 @@ class PublicationCoordinator:
         if report.submission_strategy != "per_target":
             return "submission_strategy_unverified"
         if snapshot.scheduled_at_utc is not None:
-            for target in snapshot.targets:
-                window = report.schedule_windows.get(target.account.account_id)
-                if window is None:
-                    return "schedule_window_unverified"
-                if (
-                    not max(now, window.earliest_utc)
-                    < snapshot.scheduled_at_utc
-                    <= window.latest_utc
-                ):
-                    return "schedule_outside_platform_window"
+            issues = validate_schedule(
+                [t.account.account_id for t in snapshot.targets],
+                snapshot.scheduled_at_utc,
+                report,
+                now,
+            )
+            if issues:
+                return (
+                    "schedule_window_unverified"
+                    if issues[0].code == "window_unverified"
+                    else "schedule_outside_platform_window"
+                )
         return None
 
     def run_submission(self, job_id, permit, publisher, *, verification=None, controlled_gate=None):

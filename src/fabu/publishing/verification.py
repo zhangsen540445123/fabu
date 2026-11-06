@@ -16,11 +16,16 @@ import pywintypes
 import win32crypt
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, TypeAdapter, model_validator
 
-from fabu.publishing.capabilities import CapabilityReport, can_enable_mode
+from fabu.publishing.capabilities import CapabilityReport, ScheduleWindow, can_enable_mode
 from fabu.publishing.gateway import SubmissionReceipt
 from fabu.publishing.journal import SqliteUploadJournal
 from fabu.publishing.models import CLI_CONTRACT_VERSION
 from fabu.publishing.reconcile import checked_receipt
+from fabu.publishing.schedule import (
+    NativeScheduleObservation,
+    validate_schedule,
+    verify_native_schedule,
+)
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Count = Annotated[int, Field(strict=True, ge=0)]
@@ -84,6 +89,7 @@ class TargetEvidence(Evidence):
     kind: Literal["target"]
     metadata_digest: Digest
     receipt: SubmissionReceipt
+    native_schedule: NativeScheduleObservation | None = None
 
 
 class QuotaEvidence(Evidence):
@@ -96,8 +102,28 @@ class QuotaEvidence(Evidence):
     isolated: StrictBool
 
 
+class WindowEvidence(Evidence):
+    kind: Literal["window"]
+    target_id: str = Field(min_length=1, max_length=128)
+    earliest_utc: datetime
+    latest_utc: datetime
+    minimum_lead_seconds: Count
+    expires_at: datetime
+    platform_native: StrictBool
+
+    @model_validator(mode="after")
+    def bounds(self):
+        ScheduleWindow(
+            earliest_utc=self.earliest_utc,
+            latest_utc=self.latest_utc,
+            minimum_lead_seconds=self.minimum_lead_seconds,
+        )
+        return self
+
+
 Observation = Annotated[
-    SafetyEvidence | UploadEvidence | TargetEvidence | QuotaEvidence, Field(discriminator="kind")
+    SafetyEvidence | UploadEvidence | TargetEvidence | QuotaEvidence | WindowEvidence,
+    Field(discriminator="kind"),
 ]
 _observation = TypeAdapter(Observation)
 
@@ -129,7 +155,10 @@ class VerificationService:
         now = self.authority.clock()
         if not permit.issued_at <= value.observed_at <= now + timedelta(seconds=5):
             raise ValueError("Evidence timestamp is outside the authorized observation interval")
-        if value.kind in {"safety", "upload", "quota"} and value.observed_at > permit.expires_at:
+        if (
+            value.kind in {"safety", "upload", "quota", "window"}
+            and value.observed_at > permit.expires_at
+        ):
             raise ValueError("Write evidence is outside the execution permit")
         identifier = str(uuid4())
         envelope = {
@@ -175,10 +204,10 @@ class VerificationService:
         except (pywintypes.error, KeyError, ValueError, TypeError) as exc:
             raise ValueError("Stored verification evidence could not be validated") from exc
 
-    def _safety(self, permit, snapshot, value):
+    def _safety(self, permit, snapshot, value, *, historical=False):
         if not isinstance(value, SafetyEvidence):
             raise ValueError("A reviewed free-cost boundary is required")
-        now = self.authority.clock()
+        now = value.observed_at if historical else self.authority.clock()
         targets = tuple(t.account.account_id for t in snapshot.targets)
         worst = (
             permit.max_uploads * value.max_upload_debit
@@ -238,6 +267,10 @@ class VerificationService:
                 report.file_limits,
             )
             mode = "native_schedule" if snapshot.mode == "native_schedule" else "immediate"
+            if snapshot.mode == "native_schedule" and validate_schedule(
+                list(permit.target_ids), snapshot.scheduled_at_utc, report, now
+            ):
+                return False
             return (
                 all(v == "SUPPORTED" for v in required)
                 and not report.payment_required
@@ -271,8 +304,40 @@ class VerificationService:
                     minutes=5
                 ) <= now - category.queried_at <= timedelta(days=1):
                     raise ValueError("Fresh account-bound category evidence required")
+        windows = {}
+        if snapshot.mode == "native_schedule":
+            with self.store.connection() as db:
+                identifiers = [
+                    r[0]
+                    for r in db.execute(
+                        "SELECT id FROM verification_evidence WHERE snapshot_digest=? "
+                        "AND permit_id=? AND kind='window'",
+                        (snapshot.digest, permit.id),
+                    ).fetchall()
+                ]
+            evidence = [self._read(permit, snapshot, i) for i in identifiers]
+            for target in permit.target_ids:
+                matching = [v for v in evidence if v.target_id == target]
+                if not matching:
+                    continue
+                matching.sort(key=lambda v: v.observed_at, reverse=True)
+                v = matching[0]
+                if (
+                    len(matching) > 1
+                    and matching[1].observed_at == v.observed_at
+                    or not v.platform_native
+                    or not v.observed_at <= now < v.expires_at
+                    or now - v.observed_at > timedelta(minutes=5)
+                ):
+                    continue
+                windows[target] = ScheduleWindow(
+                    earliest_utc=v.earliest_utc,
+                    latest_utc=v.latest_utc,
+                    minimum_lead_seconds=v.minimum_lead_seconds,
+                )
         return base.model_copy(
             update={
+                "schedule_windows": windows,
                 "quota": "SUPPORTED",
                 "temporary_storage": "SUPPORTED",
                 "file_limits": "SUPPORTED",
@@ -378,7 +443,7 @@ class VerificationService:
         try:
             if len(safety) != 1:
                 raise ValueError("No unique safety evidence")
-            boundary = self._safety(permit, snapshot, safety[0])
+            boundary = self._safety(permit, snapshot, safety[0], historical=True)
         except ValueError:
             blockers.append("cost_boundary_unverified")
         uploads = {}
@@ -408,6 +473,17 @@ class VerificationService:
             if target is None:
                 continue
             checked = checked_receipt(snapshot, "live", target.account.account_id, v.receipt)
+            if snapshot.mode == "native_schedule":
+                if v.native_schedule is None:
+                    continue
+                native = verify_native_schedule(
+                    v.receipt, [v.native_schedule], snapshot.scheduled_at_utc, now=now
+                )
+                if (
+                    native.state != "PUBLISHED"
+                    or not v.native_schedule.client_independence_verified
+                ):
+                    continue
             if (
                 checked.state == "PUBLISHED"
                 and checked.actual_channel == "local"
@@ -461,8 +537,18 @@ class VerificationService:
         durable = self._durable_matches(snapshot, uploads, targets)
         if not durable:
             blockers.append("durable_attempts_unverified")
+        within_permit = (
+            len(upload_values) <= permit.max_uploads
+            and permit.max_submissions_per_target == 1
+            and permit.allow_temporary_storage_upload
+        )
+        if not within_permit:
+            blockers.append("observed_operations_exceed_permit")
         complete = (
-            durable and boundary is not None and all(v == "SUPPORTED" for v in facts.values())
+            within_permit
+            and durable
+            and boundary is not None
+            and all(v == "SUPPORTED" for v in facts.values())
         )
         result = CapabilityReport(
             checked_at=now,
