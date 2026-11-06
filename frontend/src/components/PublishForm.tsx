@@ -283,6 +283,16 @@ export default function PublishForm({
       {commandActive && (
         <p role="status">仿真任务已排队或正在执行，请等待状态回执。</p>
       )}
+      {run?.source_conflict && (
+        <p className="error" role="alert">
+          此来源在所选账号已有其他发布任务；请先核对原任务，不能重复投稿。
+        </p>
+      )}
+      {run?.resource_blocked && (
+        <p className="error" role="alert">
+          资源上传结果不明：请先核对临时存储和扣次。本任务不会自动重新上传或继续投稿。
+        </p>
+      )}
       {run?.can_submit && (
         <button
           className="primary"

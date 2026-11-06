@@ -138,3 +138,32 @@ it("real account choices require explicit stable-id selection", async () => {
     expect(screen.getByRole("checkbox", { name: /B站/ })).not.toBeChecked(),
   );
 });
+it("unknown resource upload requires investigation and never offers reupload", async () => {
+  api.getTargetStatus.mockResolvedValue({
+    ...run,
+    state: "PAUSED",
+    resource_blocked: true,
+    can_submit: false,
+    can_reconcile: false,
+  });
+  render(<PublishForm job={job} refresh={async () => {}} />);
+  expect(await screen.findByText(/资源上传结果不明/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "开始本地仿真" }),
+  ).not.toBeInTheDocument();
+});
+it("another task owning the source cannot be silently submitted again", async () => {
+  api.getTargetStatus.mockResolvedValue({
+    ...run,
+    source_conflict: true,
+    can_submit: false,
+    can_reconcile: false,
+  });
+  render(<PublishForm job={job} refresh={async () => {}} />);
+  expect(
+    await screen.findByText(/此来源在所选账号已有其他发布任务/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "开始本地仿真" }),
+  ).not.toBeInTheDocument();
+});

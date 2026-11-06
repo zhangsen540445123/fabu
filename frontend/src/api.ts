@@ -293,6 +293,8 @@ export interface PublishTarget {
   category: string[];
 }
 export interface PublishRun {
+  resource_blocked?: boolean;
+  source_conflict?: boolean;
   job_id?: string;
   content_revision?: number;
   snapshot_digest?: string;

@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,9 +12,9 @@ from PIL import Image, ImageDraw
 from fabu.api.app import create_app
 from fabu.media.runtime import MediaTools
 from fabu.media.service import MediaService
-from fabu.media.source import SelectedFormat, SourceManifest
-from fabu.settings import load_settings
+from fabu.media.source import SelectedFormat, SourceManifest, parse_youtube_url
 from fabu.publishing.fake_gateway import FakePublisher
+from fabu.settings import load_settings
 from fabu.store import JobStore
 
 with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
@@ -60,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
     def service_factory(cancel):
         def local_source(job):
             return SourceManifest(
-                video_id="L6imSiJLd9Q",
+                video_id=parse_youtube_url(job.spec.source_url),
                 source=source_ref,
                 thumbnail=cover_ref,
                 selected_format=SelectedFormat(
@@ -85,7 +86,14 @@ with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
         )
 
     app = create_app(settings, store, enable_worker=True, service_factory=service_factory)
-    app.state.publication_queue.publisher_factory = lambda authority, cancel: FakePublisher(
+
+    class ScenarioPublisher(FakePublisher):
+        def prepare(self, snapshot, permit):
+            if "恢复验收" in snapshot.title:
+                self.outcomes = deque(["UNKNOWN"])
+            return super().prepare(snapshot, permit)
+
+    app.state.publication_queue.publisher_factory = lambda authority, cancel: ScenarioPublisher(
         authority, outcomes=["SUBMITTED", "FAILED", "SUBMITTED"], cancel=cancel
     )
     source_ref = app.state.assets.import_file(source, "video")

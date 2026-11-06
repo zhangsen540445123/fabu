@@ -200,6 +200,25 @@ def public_run(store, run):
     snapshot = PublishSnapshot.model_validate_json(run["snapshot_json"])
     job = store.get(snapshot.job_id)
     with store.connection() as db:
+        source_conflict = bool(
+            db.execute(
+                "SELECT 1 FROM publication_source_claims WHERE scope=? AND video_id=? "
+                "AND run_id<>? AND target_id IN (" + ",".join("?" for _ in snapshot.targets) + ")",
+                (
+                    run["scope"],
+                    snapshot.video_id,
+                    run["id"],
+                    *[t.account.account_id for t in snapshot.targets],
+                ),
+            ).fetchone()
+        )
+        resource_blocked = bool(
+            db.execute(
+                "SELECT 1 FROM upload_attempts WHERE scope=? AND source_video_id=? "
+                "AND state IN ('SUBMITTING','UNKNOWN')",
+                (run["scope"], snapshot.video_id),
+            ).fetchone()
+        )
         rows = db.execute(
             "SELECT a.*, l.definitely_not_submitted FROM target_attempts a JOIN "
             "publication_attempt_links l ON a.id=l.attempt_id WHERE l.run_id=? ORDER BY a.rowid",
@@ -243,6 +262,8 @@ def public_run(store, run):
         "scope": run["scope"],
         "state": run["state"],
         "reason": run["reason"],
+        "resource_blocked": resource_blocked,
+        "source_conflict": source_conflict,
         "title": snapshot.title,
         "mode": snapshot.mode,
         "scheduled_at_utc": snapshot.scheduled_at_utc,
@@ -256,6 +277,8 @@ def public_run(store, run):
         and run["state"] in {"NEW", "PAUSED"}
         and not active
         and not needs_reconcile
+        and not resource_blocked
+        and not source_conflict
         and not failed_without_retry,
         "can_reconcile": needs_reconcile and not active,
         "command": dict(command) if command else None,
