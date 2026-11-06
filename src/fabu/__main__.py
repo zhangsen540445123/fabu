@@ -1,31 +1,37 @@
-"""Run the loopback service. Normal startup cannot enable real publishing."""
+"""Default entrypoint shares the owned Windows runtime lifecycle."""
 
 import argparse
-import threading
-import webbrowser
+import json
 
-import uvicorn
-
-from fabu.api.app import create_app
-from fabu.settings import check_environment, load_settings
-from fabu.store import JobStore
+from fabu.launcher import check_installation, launch, stop_owned_runtime
+from fabu.settings import load_settings
 
 
 def main():
     parser = argparse.ArgumentParser(description="Fabu local video workflow")
-    parser.add_argument("--check", action="store_true", help="Read-only local path diagnostics")
-    parser.add_argument("--open-browser", action="store_true", help="Open authenticated local UI")
+    parser.add_argument("--check", action="store_true", help="Read-only installation diagnostics")
+    parser.add_argument(
+        "--stop", action="store_true", help="Gracefully stop only the owned runtime"
+    )
+    parser.add_argument(
+        "--open-browser", action="store_true", help="Open authenticated UI (default)"
+    )
+    parser.add_argument(
+        "--no-browser", action="store_true", help="Start background runtime without opening UI"
+    )
     args = parser.parse_args()
     settings = load_settings()
-    if args.check:
-        print(check_environment(settings).model_dump_json(indent=2))
-        return
-    app = create_app(settings, JobStore(settings.db_path), enable_worker=True)
-    if args.open_browser:
-        url = f"http://127.0.0.1:{settings.port}/#bootstrap={app.state.security.bootstrap_token}"
-        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    # Access logs are disabled: bootstrap tokens are never printed or stored in request logs.
-    uvicorn.run(app, host=settings.bind_host, port=settings.port, access_log=False)
+    try:
+        if args.check:
+            result = check_installation(settings)
+        elif args.stop:
+            result = {"stopped": stop_owned_runtime(settings)}
+        else:
+            result = launch(settings, open_browser=not args.no_browser).model_dump(mode="json")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    except (ValueError, OSError) as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

@@ -24,6 +24,13 @@ class LocalSecurity:
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
 
+    def issue_bootstrap(self):
+        """Called only by authenticated local runtime control, not normal web requests."""
+        with self._lock:
+            self.bootstrap_token = secrets.token_urlsafe(32)
+            self._bootstrap_used = False
+            return self.bootstrap_token
+
     def exchange(self, authorization: str | None) -> tuple[str, str] | None:
         expected = f"Bearer {self.bootstrap_token}"
         with self._lock:
