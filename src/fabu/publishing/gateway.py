@@ -44,6 +44,12 @@ class SubmissionReceipt(BaseModel):
     scheduled_at_utc: datetime | None = None
     actual_channel: str | None = None
     reason: str | None = None
+    snapshot_digest: str | None = None
+    video_sha256: str | None = None
+    cover_sha256: str | None = None
+    platform: str | None = None
+    evidence_origin: Literal["unknown", "simulation", "verified_platform"] = "unknown"
+    definitely_not_submitted: bool = False
 
 
 class ReconcileResult(BaseModel):
@@ -54,6 +60,12 @@ class ReconcileResult(BaseModel):
     platform_content_id: str | None = None
     scheduled_at_utc: datetime | None = None
     reason: str | None = None
+    snapshot_digest: str | None = None
+    video_sha256: str | None = None
+    cover_sha256: str | None = None
+    platform: str | None = None
+    evidence_origin: Literal["unknown", "simulation", "verified_platform"] = "unknown"
+    definitely_not_submitted: bool = False
 
 
 class UploadJournal(Protocol):

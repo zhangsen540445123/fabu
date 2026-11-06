@@ -16,6 +16,7 @@ JobState = Literal[
     "PAUSED",
     "FAILED",
     "CANCELED",
+    "COMPLETED",
 ]
 TargetState = Literal[
     "PENDING",

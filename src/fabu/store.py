@@ -20,6 +20,7 @@ _TRANSITIONS = {
     "PAUSED": {"NEW", "FAILED", "CANCELED"},
     "FAILED": {"NEW", "CANCELED"},
     "CANCELED": set(),
+    "COMPLETED": set(),
 }
 _SIDE_EFFECT_STATES = {
     "SUBMITTING",
@@ -267,6 +268,14 @@ class JobStore:
     def recover_interrupted(self) -> list[str]:
         # Caller must hold the global Worker mutex before invoking this after a restart.
         with self.transaction() as db:
+            # Coordinator-owned attempts retain scope/revision in publication_runs. Recover
+            # their uncertainty without reviving canceled jobs or changing newer content.
+            db.execute(
+                "UPDATE target_attempts SET state='UNKNOWN',updated_at=? "
+                "WHERE state='SUBMITTING' AND id IN "
+                "(SELECT attempt_id FROM publication_attempt_links)",
+                (_now(),),
+            )
             rows = db.execute("""SELECT DISTINCT jobs.* FROM jobs LEFT JOIN target_attempts a
                  ON jobs.id=a.job_id WHERE jobs.state IN
                  ('INSPECTING','DOWNLOADING','PROCESSING','PUBLISHING')
@@ -274,7 +283,13 @@ class JobStore:
             result = []
             for row in rows:
                 job = self._snapshot(row)
-                reason = "reconcile_required" if job.content_frozen else "interrupted_processing"
+                reason = (
+                    "reconcile_required"
+                    if job.content_frozen
+                    else "interrupted_publication"
+                    if job.state == "PUBLISHING"
+                    else "interrupted_processing"
+                )
                 db.execute(
                     """UPDATE target_attempts SET state='UNKNOWN',updated_at=?
                              WHERE job_id=? AND state='SUBMITTING'""",

@@ -29,6 +29,8 @@ _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 
 
 class CliPublisher:
+    execution_scope = "live"
+
     def __init__(
         self,
         package_root: Path,

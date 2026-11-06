@@ -4,13 +4,31 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Capability = Literal["UNKNOWN", "SUPPORTED", "UNSUPPORTED"]
 
 
+class ScheduleWindow(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    earliest_utc: datetime
+    latest_utc: datetime
+
+    @model_validator(mode="after")
+    def valid_window(self):
+        if (
+            self.earliest_utc.utcoffset() is None
+            or self.latest_utc.utcoffset() is None
+            or self.earliest_utc >= self.latest_utc
+        ):
+            raise ValueError("Platform scheduling bounds require ordered timezone-aware times")
+        return self
+
+
 class CapabilityReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+    submission_strategy: Literal["UNKNOWN", "per_target", "batch"] = "UNKNOWN"
+    schedule_windows: dict[str, ScheduleWindow] = Field(default_factory=dict)
     account_status: Capability = "UNKNOWN"
     upload: Capability = "UNKNOWN"
     immediate: Capability = "UNKNOWN"

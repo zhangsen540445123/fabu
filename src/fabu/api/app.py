@@ -26,6 +26,7 @@ from fabu.media.controller import MediaController
 from fabu.presets import PresetStore
 from fabu.publishing.capabilities import CapabilityReport
 from fabu.publishing.journal import SqliteUploadJournal
+from fabu.publishing.reconcile import recover_publications
 from fabu.settings import Settings, check_environment
 from fabu.store import JobStore
 
@@ -72,6 +73,7 @@ def create_app(
     def startup_cleanup():
         app.state.credentials.cleanup_stale_sessions()
         SqliteUploadJournal.recover_interrupted(store)
+        recover_publications(store)
 
     app.state.media_controller = MediaController(
         store,

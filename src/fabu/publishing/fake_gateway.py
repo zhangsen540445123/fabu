@@ -1,9 +1,10 @@
 """Deterministic local-only publisher. There is no real transport to fall back to."""
 
 from collections import deque
+from datetime import timedelta
 from threading import Event
 
-from fabu.publishing.capabilities import CapabilityReport
+from fabu.publishing.capabilities import CapabilityReport, ScheduleWindow
 from fabu.publishing.gateway import (
     ReconcileResult,
     SubmissionReceipt,
@@ -15,6 +16,8 @@ from fabu.publishing.gateway import (
 
 
 class FakePublisher:
+    execution_scope = "simulation"
+
     def __init__(
         self, authority, *, outcomes=None, delay_seconds: float = 0, cancel: Event | None = None
     ):
@@ -26,10 +29,19 @@ class FakePublisher:
         self.outcomes = deque(outcomes or [])
         self.calls = []
         self.receipts = {}
+        self.journal = None
 
     def preflight(self, snapshot):
         return CapabilityReport(
             checked_at=self.authority.clock(),
+            submission_strategy="per_target",
+            schedule_windows={
+                t.account.account_id: ScheduleWindow(
+                    earliest_utc=self.authority.clock(),
+                    latest_utc=self.authority.clock() + timedelta(days=30),
+                )
+                for t in snapshot.targets
+            },
             account_status="SUPPORTED",
             upload="SUPPORTED",
             immediate="SUPPORTED",
@@ -48,16 +60,23 @@ class FakePublisher:
         self.authority.validate(permit, snapshot, real=False)
         resources = []
         for kind, digest in [("video", snapshot.output.sha256), ("cover", snapshot.cover.sha256)]:
+            cached = self.journal.get(snapshot.digest, kind) if self.journal else None
+            if cached is not None:
+                resources.append(cached)
+                continue
             self.authority.consume(permit, snapshot, "upload")
-            resources.append(
-                UploadReceipt(
-                    resource=kind,
-                    sha256=digest,
-                    key=f"cloud-publish/simulation/{digest}",
-                    metadata=resource_metadata(snapshot, kind),
-                    raw={"simulation": True},
-                )
+            if self.journal:
+                self.journal.begin(snapshot.digest, kind)
+            receipt = UploadReceipt(
+                resource=kind,
+                sha256=digest,
+                key=f"cloud-publish/simulation/{digest}",
+                metadata=resource_metadata(snapshot, kind),
+                raw={"simulation": True},
             )
+            if self.journal:
+                self.journal.complete(snapshot.digest, receipt)
+            resources.append(receipt)
         self.calls.append(("prepare", snapshot.digest))
         return assemble_prepared(snapshot, tuple(resources), "simulation-client", self.authority)
 
@@ -80,6 +99,16 @@ class FakePublisher:
             scheduled_at_utc=prepared.snapshot.scheduled_at_utc if state == "SCHEDULED" else None,
             actual_channel="simulation",
             reason="simulation_only",
+            snapshot_digest=prepared.snapshot.digest,
+            video_sha256=prepared.snapshot.output.sha256,
+            cover_sha256=prepared.snapshot.cover.sha256,
+            platform=next(
+                t.account.platform
+                for t in prepared.snapshot.targets
+                if t.account.account_id == target_id
+            ),
+            evidence_origin="simulation",
+            definitely_not_submitted=state == "FAILED",
         )
         self.receipts[target_id] = receipt
         return receipt
