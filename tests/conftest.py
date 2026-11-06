@@ -1,4 +1,5 @@
 """Live side effects are never implicitly authorized by the normal test suite."""
+
 import pytest
 
 

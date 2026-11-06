@@ -30,11 +30,13 @@ def test_explicit_paths_with_spaces_are_preserved(tmp_path):
 
     data = tmp_path / "视频 [1] & 日常"
     state = tmp_path / "私人 设置"
-    settings = load_settings({
-        "LOCALAPPDATA": str(tmp_path),
-        "FABU_DATA_DIR": str(data),
-        "FABU_STATE_DIR": str(state),
-    })
+    settings = load_settings(
+        {
+            "LOCALAPPDATA": str(tmp_path),
+            "FABU_DATA_DIR": str(data),
+            "FABU_STATE_DIR": str(state),
+        }
+    )
     assert settings.data_dir == data
     assert settings.db_path == state / "fabu.sqlite3"
 
@@ -67,11 +69,13 @@ def test_missing_localappdata_not_guessed():
 def test_environment_report_is_read_only_and_contains_no_secret(tmp_path):
     from fabu.settings import check_environment, load_settings
 
-    settings = load_settings({
-        "LOCALAPPDATA": str(tmp_path),
-        "FABU_DATA_DIR": str(tmp_path / "media"),
-        "YIXIAOER_API_KEY": "never-include-this-value",
-    })
+    settings = load_settings(
+        {
+            "LOCALAPPDATA": str(tmp_path),
+            "FABU_DATA_DIR": str(tmp_path / "media"),
+            "YIXIAOER_API_KEY": "never-include-this-value",
+        }
+    )
     before = set(tmp_path.iterdir())
     report = check_environment(settings)
     assert report.python_version.startswith("3.12")
