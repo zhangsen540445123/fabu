@@ -34,11 +34,11 @@
 
 **Interfaces：** `select_topic_group(title: str, override_group: str | None) -> TopicSelection`；`build_publish_snapshot(job: JobSnapshot, output: OutputManifest, account_config: dict) -> PublishSnapshot`。接口不调用投稿，TopicSelection零/多命中返回需人工选择状态。
 
-- [ ] RED：`test_title_topic_rules`断言“剃须仙人的日常”→WRHkkYwU、“剃光头”→2aZjVP8u、“沉浸式剪发”→QKHLZMFO；“剃光头与剪发”暂停、无匹配不默认助眠、人工覆盖优先；`test_authorized_does_not_imply_self_shot`拒绝未经语义确认的来源字段；`test_wrong_revision_output_rejected`不消费别的任务成片。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\publishing\test_templates.py' -q`观察RED。
-- [ ] 实现标签快照：助眠=[解压,助眠]；2aZjVP8u=[ASMR,解压,助眠,剃光头]；QKHLZMFO=[解压,助眠,ASMR,剪发]；WRHkkYwU=[解压,ASMR,剃须仙人,助眠]。组名不当标签发出；不假设CLI能实时同步个人模板。
-- [ ] B站分类从真实查询解析“生活经验”完整路径/ID，歧义暂停；每平台schema映射字段/长度/标签语义、公开/简介默认值可见可改；不自动删改标题/增事实/署名/独家声明。发布前核对output摘要、预览批准与源封面。
-- [ ] GREEN：同命令PASS；三平台共享同一output/title/cover/tags语义，字段格式各自适配；首次SUBMITTING后禁止修改共享快照。
-- [ ] 提交`feat: build verified platform metadata snapshots`，限定Files。
+- [x] RED：`test_title_topic_rules`断言“剃须仙人的日常”→WRHkkYwU、“剃光头”→2aZjVP8u、“沉浸式剪发”→QKHLZMFO；“剃光头与剪发”暂停、无匹配不默认助眠、人工覆盖优先；`test_authorized_does_not_imply_self_shot`拒绝未经语义确认的来源字段；`test_wrong_revision_output_rejected`不消费别的任务成片。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\publishing\test_templates.py' -q`观察RED。
+- [x] 实现标签快照：助眠=[解压,助眠]；2aZjVP8u=[ASMR,解压,助眠,剃光头]；QKHLZMFO=[解压,助眠,ASMR,剪发]；WRHkkYwU=[解压,ASMR,剃须仙人,助眠]。组名不当标签发出；不假设CLI能实时同步个人模板。
+- [x] B站分类从真实查询解析“生活经验”完整路径/ID，歧义暂停；每平台schema映射字段/长度/标签语义、公开/简介默认值可见可改；不自动删改标题/增事实/署名/独家声明。发布前核对output摘要、预览批准与源封面。
+- [x] GREEN：同命令PASS；三平台共享同一output/title/cover/tags语义，字段格式各自适配；首次SUBMITTING后禁止修改共享快照。
+- [x] 提交`feat: build verified platform metadata snapshots`，限定Files。
 
 ### Task 2: P02 — 官方CLI网关、凭证与FakePublisher
 
@@ -54,7 +54,7 @@
 
 ### Task 3: P03 — 事务发布状态机与对账防重
 
-**依赖：** F04、P01–P02。**Files：** `D:\auto-deploy\src\fabu\publishing\coordinator.py`、`D:\auto-deploy\src\fabu\publishing\reconcile.py`、`D:\auto-deploy\src\fabu\publishing\permits.py`、`D:\auto-deploy\src\fabu\migrations\004_publish_attempts.sql`、`D:\auto-deploy\tests\publishing\test_coordinator.py`。
+**依赖：** F04、P01–P02。**Files：** `D:\auto-deploy\src\fabu\publishing\coordinator.py`、`D:\auto-deploy\src\fabu\publishing\reconcile.py`、`D:\auto-deploy\src\fabu\publishing\permits.py`、`D:\auto-deploy\src\fabu\migrations\005_publish_attempts.sql`、`D:\auto-deploy\tests\publishing\test_coordinator.py`。
 
 **Interfaces：** 复用P02的ExecutionPermit；`run_submission(job_id: str, permit: ExecutionPermit, publisher: Publisher, clock: Callable[[],datetime]) -> JobSnapshot`；`reconcile_pending(store: JobStore, publisher: Publisher) -> list[ReconcileResult]`。资源上传attempt与投稿attempt分别持久化，不能上传超时就重复创造资源/扣次。
 
