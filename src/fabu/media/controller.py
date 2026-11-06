@@ -20,7 +20,10 @@ class MediaController:
         store: JobStore,
         service_factory: Callable[[threading.Event], MediaService],
         preview_root: Path,
+        *,
+        startup_cleanup: Callable[[], None] | None = None,
     ):
+        self.startup_cleanup = startup_cleanup
         self.store, self.service_factory, self.preview_root = store, service_factory, preview_root
         self._lock = threading.Lock()
         self._wake = threading.Event()
@@ -209,6 +212,8 @@ class MediaController:
     def _run(self):
         try:
             with Worker(self.store) as worker:
+                if self.startup_cleanup:
+                    self.startup_cleanup()
                 # A restarted process never pretends an interrupted preview was completed.
                 with self.store.transaction() as db:
                     db.execute(

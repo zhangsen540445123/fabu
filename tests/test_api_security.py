@@ -165,3 +165,15 @@ def test_settings_concurrent_updates_remain_valid(app):
         assert list(pool.map(update, range(8))) == [200] * 8
     data = json.loads((app.state.settings.state_dir / "ui-settings.json").read_text())
     assert data["test_mode"] in ("local", "simulation")
+
+
+def test_configured_credential_status_never_returns_secret_or_client_id(app):
+    from fabu.credentials import Credentials
+
+    app.state.credentials.save(
+        Credentials(api_key="synthetic-private-key", local_client_id="synthetic-private-client")
+    )
+    client, _ = login(app)
+    response = client.get("/api/settings")
+    assert response.json()["credentials"] == {"configured": True}
+    assert "synthetic-private" not in response.text

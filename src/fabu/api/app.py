@@ -19,6 +19,7 @@ from fabu.api.media import router as media_router
 from fabu.api.presets import router as presets_router
 from fabu.api.security import LocalSecurity
 from fabu.assets import AssetStore
+from fabu.credentials import CredentialStore
 from fabu.media.approvals import PreviewApprovalStore
 from fabu.media.bootstrap import configured_service
 from fabu.media.controller import MediaController
@@ -65,10 +66,12 @@ def create_app(
     app.state.assets = AssetStore(settings.state_dir / "assets", store)
     app.state.presets = PresetStore(store, app.state.assets)
     app.state.approvals = PreviewApprovalStore(store, app.state.presets, app.state.assets)
+    app.state.credentials = CredentialStore(settings.state_dir / "credentials")
     app.state.media_controller = MediaController(
         store,
         service_factory or (lambda cancel: configured_service(app, cancel)),
         settings.data_dir / "previews",
+        startup_cleanup=app.state.credentials.cleanup_stale_sessions,
     )
     app.state.capabilities = CapabilityReport(checked_at=datetime.now(UTC))
     with store.connection() as db:
@@ -146,7 +149,7 @@ def create_app(
     def get_settings():
         return {
             **app.state.settings.model_dump(mode="json"),
-            "credentials": {"configured": False},
+            "credentials": {"configured": app.state.credentials.configured()},
             "environment": check_environment(app.state.settings).model_dump(mode="json"),
             "default_preset_version_id": app.state.default_preset.id,
         }

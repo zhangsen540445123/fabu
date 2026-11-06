@@ -46,11 +46,11 @@
 
 **Interfaces：** `Publisher.preflight(snapshot: PublishSnapshot) -> CapabilityReport`；`prepare(snapshot: PublishSnapshot, permit: ExecutionPermit) -> PreparedSubmission`（可能上传，属于写入）；`submit(prepared: PreparedSubmission, permit: ExecutionPermit) -> SubmissionReceipt`；`reconcile(attempt: TargetAttempt) -> ReconcileResult`。本任务在permits.py定义ExecutionPermit模型及范围校验；P03复用，P05添加受控实测证据流程。
 
-- [ ] RED：`test_default_gateway_never_writes`未许可prepare/submit拒绝且调用数0；`test_local_channel_cannot_fall_back`CLI失败后云通道调用数0；`test_ok_does_not_mean_published`ok只映射provider accepted；`test_secret_roundtrip_no_plaintext_persistence`DPAPI往返正确、临时配置ACL受限且最后删除。运行Python的`test_gateway.py`与`test_credentials.py`观察RED。
-- [ ] 实现官方CLI固定实际入口、显式YIXIAOER_CONFIG/PROJECT_DIR/API_URL与本机Client ID；校验/提交显式使用经当前版本核对的`--publish-channel local`和`--client-id`，检查返回实际通道一致；只解析已核实字段，使用受控payload文件，忽略响应内建议自动执行的nextCommand。yxer 3.2.32仅为已有已验证版本，实作必须核对实际安装版本而非自动升级。
-- [ ] 凭证经用户显式配置保存于用户级Windows保护存储；需要明文CLI配置时短期生成受限文件，try/finally清理并启动清遗留；错误日志白名单脱敏。FakePublisher可注入成功/失败/延迟/未知，绝不隐式切到真实实现。
-- [ ] GREEN：上述测试PASS；Fake覆盖全部接口，真实网关单测用合成CLI响应；恶意nextCommand/含密钥URL/未知字段不执行不泄漏。
-- [ ] 提交`feat: isolate local publishing gateway and credentials`，限定Files，测试不得实际上传。
+- [x] RED：`test_default_gateway_never_writes`未许可prepare/submit拒绝且调用数0；`test_local_channel_cannot_fall_back`CLI失败后云通道调用数0；`test_ok_does_not_mean_published`ok只映射provider accepted；`test_secret_roundtrip_no_plaintext_persistence`DPAPI往返正确、临时配置ACL受限且最后删除。运行Python的`test_gateway.py`与`test_credentials.py`观察RED。
+- [x] 实现官方CLI固定实际入口、显式YIXIAOER_CONFIG/PROJECT_DIR/API_URL与本机Client ID；校验/提交显式使用经当前版本核对的`--publish-channel local`和`--client-id`，检查返回实际通道一致；只解析已核实字段，使用受控payload文件，忽略响应内建议自动执行的nextCommand。yxer 3.2.32仅为已有已验证版本，实作必须核对实际安装版本而非自动升级。
+- [x] 凭证经用户显式配置保存于用户级Windows保护存储；需要明文CLI配置时短期生成受限文件，try/finally清理并启动清遗留；错误日志白名单脱敏。FakePublisher可注入成功/失败/延迟/未知，绝不隐式切到真实实现。
+- [x] GREEN：上述测试PASS；Fake覆盖全部接口，真实网关单测用合成CLI响应；恶意nextCommand/含密钥URL/未知字段不执行不泄漏。
+- [x] 提交`feat: isolate local publishing gateway and credentials`，限定Files，测试不得实际上传。
 
 ### Task 3: P03 — 事务发布状态机与对账防重
 

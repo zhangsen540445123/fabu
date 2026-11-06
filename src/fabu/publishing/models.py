@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
@@ -149,3 +149,25 @@ def verify_publish_snapshot(snapshot: PublishSnapshot) -> None:
     validated = PublishSnapshot.model_validate(snapshot.model_dump())
     if validated.digest != publish_snapshot_digest(validated):
         raise ValueError("Publish snapshot changed after preparation")
+    when = validated.scheduled_at_utc
+    if (validated.mode == "native_schedule") != (when is not None):
+        raise ValueError("Snapshot schedule and publish mode disagree")
+    timestamp = None
+    if when is not None:
+        if when.utcoffset() is None or when.microsecond % 1000:
+            raise ValueError("Snapshot schedule precision or timezone is invalid")
+        delta = when.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+        timestamp = (delta.days * 86400 + delta.seconds) * 1000 + delta.microseconds // 1000
+    if validated.topic.status != "selected" or not validated.topic.tags:
+        raise ValueError("Snapshot has no selected topic semantics")
+    if len({t.account.account_id for t in validated.targets}) != len(validated.targets):
+        raise ValueError("Duplicate snapshot target")
+    for target in validated.targets:
+        if target.form.get("title") != validated.title or target.form.get("tags") != list(
+            validated.topic.tags
+        ):
+            raise ValueError("Platform forms disagree with shared title/topic content")
+        if target.form.get("scheduledTime") != timestamp:
+            raise ValueError("Platform schedule differs from shared native-schedule time")
+        if target.form.get("formType") != "task" or target.form.get("pubType", 1) != 1:
+            raise ValueError("Snapshot is not a direct platform-submission form")

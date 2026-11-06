@@ -194,3 +194,31 @@ def test_api_preview_to_approved_output_with_real_media(context, media_tools):
         assert len(output.content) == store.get(job.id).output_manifest["size_bytes"]
         assert len(calls) == 1
         assert client.get("/api/health").json()["publishing_enabled"] is False
+
+
+@pytest.mark.media
+def test_startup_secret_cleanup_runs_only_after_worker_lock(context):
+    from fabu.media.controller import MediaController
+
+    service, store, _, _, _, _, _ = context
+    calls = []
+    first = MediaController(
+        store,
+        lambda cancel: service,
+        service.workspace.parent / "previews",
+        startup_cleanup=lambda: calls.append("first"),
+    )
+    second = MediaController(
+        store,
+        lambda cancel: service,
+        service.workspace.parent / "previews",
+        startup_cleanup=lambda: calls.append("second"),
+    )
+    first.start()
+    try:
+        second.start()
+        assert calls == ["first"]
+        assert second.status()["error_code"] == "worker_already_running"
+    finally:
+        second.stop()
+        first.stop()
