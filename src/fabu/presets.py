@@ -47,6 +47,15 @@ class PresetStore:
 
     def save_draft(self, preset_id: str | None, document: dict) -> PresetVersion:
         doc = PresetDocument.model_validate(document)
+        # Late import avoids a circular dependency with the shared StepSpec envelope.
+        from fabu.media.models import OutputProfile
+        from fabu.media.registry import validate_steps
+
+        errors = validate_steps(doc.steps)
+        if errors:
+            raise ValueError("Invalid pipeline step parameters or ordering")
+        OutputProfile.model_validate(doc.output)
+
         asset_ids = {asset_id for step in doc.steps for asset_id in step.asset_ids}
         for asset_id in asset_ids:
             if not self.assets.verify(asset_id):

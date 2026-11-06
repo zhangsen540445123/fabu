@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fabu.assets import AssetRef
 from fabu.media.geometry import Size
 from fabu.media.probe import MediaInfo
 
@@ -51,6 +52,7 @@ class MediaPlan(BaseModel):
     engine_version: str = ENGINE_VERSION
     source: MediaInfo
     source_hash: str
+    preset_digest: str | None = None
     stages: list[RenderStage]
     output_size: Size
     expected_duration_ms: int
@@ -85,3 +87,9 @@ def plan_digest(plan: MediaPlan) -> str:
 def verify_plan_digest(plan: MediaPlan) -> None:
     if plan.source_hash != plan.source.sha256 or plan.digest != plan_digest(plan):
         raise PlanInvalid("Media plan or input identity changed after compilation")
+
+
+class InputBundle(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    source: MediaInfo
+    assets: dict[str, AssetRef] = Field(default_factory=dict)
