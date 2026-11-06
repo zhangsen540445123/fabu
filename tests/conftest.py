@@ -1,18 +1,11 @@
-import importlib
-
+"""Live side effects are never implicitly authorized by the normal test suite."""
 import pytest
 
 
-class MissingModule:
-    def __getattr__(self, name):
-        pytest.fail(f"Client module not implemented: {name}", pytrace=False)
-
-
-@pytest.fixture
-def client():
-    try:
-        return importlib.import_module("fabu.client")
-    except ModuleNotFoundError as error:
-        if error.name == "fabu.client":
-            return MissingModule()
-        raise
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if item.get_closest_marker("live"):
+            raise pytest.UsageError(
+                "Live operations require a separate scope-bound controlled-verification runner. "
+                "This test runner cannot authorize uploads or publication."
+            )

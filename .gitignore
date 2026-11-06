@@ -1,5 +1,4 @@
 /.venv/
-/__pycache__/
 **/__pycache__/
 /.pytest_cache/
 /.ruff_cache/
@@ -7,11 +6,17 @@
 /build/
 /dist/
 *.egg-info/
-/node_modules/
 /frontend/node_modules/
 /frontend/dist/
+/frontend/test-results/
+/frontend/playwright-report/
 *.sqlite*
+*.db
 *.log
-.env
+.env*
 /data/
 /artifacts/
+/auth.json
+*.mp4
+*.mkv
+*.webm
