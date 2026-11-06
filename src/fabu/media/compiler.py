@@ -9,6 +9,7 @@ from PIL import Image
 from fabu.assets import assert_no_reparse, sha256_file
 from fabu.media.baseline import build_baseline_plan
 from fabu.media.filters_geometry import compile_geometry, contain_size
+from fabu.media.filters_layers import compile_layers
 from fabu.media.filters_time import compile_timing
 from fabu.media.geometry import Size
 from fabu.media.models import (
@@ -49,7 +50,19 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
         raise PlanInvalid("A required immutable asset is missing")
 
     if any(
-        step.kind not in {"crop", "flip", "color", "layout", "trim", "speed", "audio_effects"}
+        step.kind
+        not in {
+            "crop",
+            "flip",
+            "color",
+            "layout",
+            "trim",
+            "speed",
+            "audio_effects",
+            "image_layer",
+            "text_layer",
+            "subtitles",
+        }
         for step in active
     ):
         raise PlanInvalid(
@@ -60,8 +73,8 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
     for key in used_assets:
         asset = bundle.assets[key]
         assert_no_reparse(asset.local_path)
-        if asset.media_type != "image" or sha256_file(asset.local_path) != asset.sha256:
-            raise PlanInvalid("Decoration asset type or integrity is invalid")
+        if sha256_file(asset.local_path) != asset.sha256:
+            raise PlanInvalid("Asset integrity is invalid")
     timing = compile_timing(bundle.source, active)
     geometry_steps = [step for step in active if step.kind in {"crop", "flip", "color", "layout"}]
     if geometry_steps:
@@ -99,6 +112,8 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
             graph_parts = [f"[0:{source.video_stream_index}]" + ",".join(filters) + "[main0]"]
             for index, decoration in enumerate(geometry.decorations):
                 asset = bundle.assets[decoration.asset_id]
+                if asset.media_type != "image":
+                    raise PlanInvalid("Decoration asset type is invalid")
                 asset_inputs.append(asset)
                 with Image.open(asset.local_path) as image:
                     size = contain_size(
@@ -157,8 +172,32 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
                 "timing_summary": timing.model_dump(mode="json"),
             }
         )
+    layer_steps = [s for s in active if s.kind in {"image_layer", "text_layer", "subtitles"}]
+    if layer_steps:
+        layers = compile_layers(
+            layer_steps,
+            plan.output_size,
+            plan.expected_duration_ms,
+            bundle.assets,
+            input_offset=1 + len(plan.asset_inputs),
+        )
+        if plan.video_graph:
+            graph = plan.video_graph.removesuffix("[vout]") + "[layer_in]"
+        else:
+            filters = [f for stage in plan.stages for f in stage.video_filters]
+            graph = f"[0:{plan.source.video_stream_index}]" + ",".join(filters) + "[layer_in]"
+        plan = plan.model_copy(
+            update={
+                "video_graph": graph + ";" + layers.graph,
+                "asset_inputs": plan.asset_inputs + layers.image_inputs,
+                "text_files": layers.text_files,
+                "font_copies": layers.font_copies,
+                "layer_summary": layers.summary,
+            }
+        )
     plan = plan.model_copy(
         update={
+            "asset_refs": {key: bundle.assets[key] for key in sorted(used_assets)},
             "output_profile": profile,
             "asset_hashes": asset_hashes,
             "preset_digest": semantic_fingerprint(preset, asset_hashes, ENGINE_VERSION),

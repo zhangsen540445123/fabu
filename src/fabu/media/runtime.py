@@ -22,13 +22,18 @@ class MediaTools(BaseModel):
         return path
 
     def _run(
-        self, path: Path, args: list[str], cancel: Event | None, timeout_s: int
+        self,
+        path: Path,
+        args: list[str],
+        cancel: Event | None,
+        timeout_s: int,
+        cwd: Path | None = None,
     ) -> CommandResult:
         return run_command(
             CommandSpec(
                 executable=path,
                 args=args,
-                cwd=path.parent,
+                cwd=cwd or path.parent,
                 env=dict(os.environ),
                 timeout_s=timeout_s,
                 max_output_bytes=16_777_216,
@@ -40,9 +45,14 @@ class MediaTools(BaseModel):
         return self._run(self.ffprobe_path, args, cancel, 1800)
 
     def ffmpeg(
-        self, args: list[str], cancel: Event | None = None, timeout_s: int = 86400
+        self,
+        args: list[str],
+        cancel: Event | None = None,
+        timeout_s: int = 86400,
+        *,
+        cwd: Path | None = None,
     ) -> CommandResult:
-        return self._run(self.ffmpeg_path, args, cancel, timeout_s)
+        return self._run(self.ffmpeg_path, args, cancel, timeout_s, cwd)
 
     def versions(self) -> dict[str, str]:
         versions = {}

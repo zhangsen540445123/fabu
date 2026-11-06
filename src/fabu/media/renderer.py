@@ -11,6 +11,7 @@ from fabu.assets import assert_no_reparse, sha256_file
 from fabu.media.baseline import build_render_command
 from fabu.media.models import MediaPlan, verify_plan_digest
 from fabu.media.probe import scan_frame_geometry
+from fabu.media.resources import materialize_resources
 from fabu.media.runtime import MediaTools
 
 
@@ -55,7 +56,7 @@ def render(
     assert_no_reparse(plan.source.path)
     if sha256_file(plan.source.path) != plan.source_hash:
         raise RenderFailed("The source changed after probing; recompile before rendering")
-    for asset in plan.asset_inputs:
+    for asset in plan.asset_refs.values():
         assert_no_reparse(asset.local_path)
         if sha256_file(asset.local_path) != plan.asset_hashes.get(asset.id):
             raise RenderFailed("Auxiliary asset changed after compilation")
@@ -66,7 +67,11 @@ def render(
     candidate = workspace / f"candidate-{identifier}.mp4"
     progress = workspace / f"progress-{identifier}.txt"
     record = workspace / f"render-{identifier}.json"
-    command = build_render_command(plan, candidate, progress)
+    resource_dir = workspace / f"resources-{identifier}"
+    graph_path = None
+    if plan.video_graph:
+        graph_path = materialize_resources(plan, resource_dir)
+    command = build_render_command(plan, candidate, progress, graph_path=graph_path)
     done = threading.Event()
     monitor_error = []
 
@@ -90,14 +95,17 @@ def render(
         record.write_text(
             json.dumps({"state": "PROCESSING", "plan_digest": plan.digest}), encoding="utf-8"
         )
-        result = tools.ffmpeg(command.args, cancel)
+        if graph_path:
+            result = tools.ffmpeg(command.args, cancel, cwd=resource_dir)
+        else:
+            result = tools.ffmpeg(command.args, cancel)
         if monitor_error:
             raise RenderFailed(monitor_error[0])
         if result.exit_code or result.canceled or result.timed_out or result.output_limit_exceeded:
             raise RenderFailed("Rendering failed or was canceled; candidate is not approved")
         if not candidate.is_file() or not candidate.stat().st_size:
             raise RenderFailed("Renderer did not produce a nonempty candidate")
-        for asset in plan.asset_inputs:
+        for asset in plan.asset_refs.values():
             if sha256_file(asset.local_path) != plan.asset_hashes.get(asset.id):
                 raise RenderFailed("Auxiliary asset changed during rendering")
         if sha256_file(plan.source.path) != plan.source_hash:

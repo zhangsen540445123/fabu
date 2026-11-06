@@ -62,7 +62,9 @@ def build_baseline_plan(source: MediaInfo) -> MediaPlan:
     return plan.model_copy(update={"digest": plan_digest(plan)})
 
 
-def build_render_command(plan: MediaPlan, candidate: Path, progress: Path) -> RenderCommand:
+def build_render_command(
+    plan: MediaPlan, candidate: Path, progress: Path, *, graph_path: Path | None = None
+) -> RenderCommand:
     verify_plan_digest(plan)
     video_filters = [f for stage in plan.stages for f in stage.video_filters]
     audio_filters = [f for stage in plan.stages for f in stage.audio_filters]
@@ -99,8 +101,8 @@ def build_render_command(plan: MediaPlan, candidate: Path, progress: Path) -> Re
         processing = [
             "-filter_complex_threads",
             "2",
-            "-filter_complex",
-            plan.video_graph,
+            "-/filter_complex" if graph_path else "-filter_complex",
+            str(graph_path) if graph_path else plan.video_graph,
             "-map",
             "[vout]",
         ]
