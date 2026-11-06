@@ -72,6 +72,21 @@ def _rational(value, label: str, *, fallback=None) -> Fraction:
         raise UnsupportedMedia(f"Missing or invalid {label}") from exc
 
 
+def _duration(stream: dict, fallback) -> Fraction:
+    if stream.get("duration") not in (None, "N/A", ""):
+        return _rational(stream["duration"], "stream duration")
+    tag = stream.get("tags", {}).get("DURATION")
+    if tag:
+        try:
+            hours, minutes, seconds = tag.split(":")
+            endpoint = Fraction(int(hours) * 3600 + int(minutes) * 60) + Fraction(seconds)
+            start = _rational(stream.get("start_time"), "stream start", fallback=0)
+            return endpoint - start
+        except (ValueError, TypeError) as exc:
+            raise UnsupportedMedia("Invalid stream duration tag") from exc
+    return _rational(fallback, "container duration")
+
+
 def _rotation(video: dict) -> int:
     angles = []
     for data in video.get("side_data_list", []):
@@ -165,9 +180,7 @@ def probe_media(path: Path, runner: Callable[[list[str]], CommandResult]) -> Med
         if len(video_tracks) != 1 or len(audio_tracks) > 1:
             raise UnsupportedMedia("Ambiguous video/audio tracks require explicit selection")
         v = video_tracks[0]
-        duration = _rational(
-            v.get("duration"), "video duration", fallback=raw.get("format", {}).get("duration")
-        )
+        duration = _duration(v, raw.get("format", {}).get("duration"))
         warnings = []
         sar_raw = v.get("sample_aspect_ratio")
         if sar_raw in {None, "N/A", "0:1"}:
@@ -184,7 +197,7 @@ def probe_media(path: Path, runner: Callable[[list[str]], CommandResult]) -> Med
                 channels=channels,
                 channel_layout=a.get("channel_layout")
                 or {1: "mono", 2: "stereo"}.get(channels, "unknown"),
-                duration=_rational(a.get("duration"), "audio duration", fallback=duration),
+                duration=_duration(a, duration),
                 start_time=_rational(a.get("start_time"), "audio start", fallback=0),
             )
         else:

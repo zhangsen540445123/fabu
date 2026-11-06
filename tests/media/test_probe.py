@@ -262,3 +262,15 @@ def test_frame_scan_requires_frames_and_handles_metadata(tmp_path, payload):
     assert scan_frame_geometry(info, lambda _: result) == 2
     with pytest.raises(UnsupportedMedia):
         scan_frame_geometry(info, lambda _: CommandResult(exit_code=0, stdout=b"", stderr=b""))
+
+
+def test_matroska_duration_tags_preserve_video_audio_timing(tmp_path, payload):
+    video, audio = payload["streams"]
+    video.pop("duration")
+    audio.pop("duration")
+    video["tags"] = {"DURATION": "00:00:10.000000000"}
+    audio["tags"] = {"DURATION": "00:00:10.064000000"}
+    payload["format"]["duration"] = "10.064"
+    info = probe(tmp_path, payload)
+    assert info.duration == Fraction(10)
+    assert info.audio.duration == Fraction(1258, 125)

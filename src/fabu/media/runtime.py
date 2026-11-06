@@ -36,8 +36,8 @@ class MediaTools(BaseModel):
             cancel or Event(),
         )
 
-    def probe(self, args: list[str]) -> CommandResult:
-        return self._run(self.ffprobe_path, args, None, 1800)
+    def probe(self, args: list[str], cancel: Event | None = None) -> CommandResult:
+        return self._run(self.ffprobe_path, args, cancel, 1800)
 
     def ffmpeg(
         self, args: list[str], cancel: Event | None = None, timeout_s: int = 86400
