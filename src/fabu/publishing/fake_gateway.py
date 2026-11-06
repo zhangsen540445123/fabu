@@ -50,6 +50,8 @@ class FakePublisher:
             file_limits="SUPPORTED",
             hevc="SUPPORTED",
             source_declarations="SUPPORTED",
+            temporary_storage="SUPPORTED",
+            categories="SUPPORTED",
             evidence_refs=["simulation-only"],
             mode_evidence={
                 t.account.account_id: ["immediate", "native_schedule"] for t in snapshot.targets

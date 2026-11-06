@@ -86,19 +86,25 @@ class PermitAuthority:
         )
         return value.model_copy(update={"signature": self._signature(value)})
 
-    def validate(
-        self, permit: ExecutionPermit | None, snapshot: PublishSnapshot, *, real: bool | None = None
-    ):
+    def verify_integrity(self, permit: ExecutionPermit, snapshot: PublishSnapshot):
+        """Verify historical scope without pretending an expired permit allows new writes."""
         if permit is None:
             raise ValueError("No execution permit")
+        ExecutionPermit.model_validate(permit.model_dump())
         verify_publish_snapshot(snapshot)
         if (
             not hmac.compare_digest(permit.signature, self._signature(permit))
             or permit.snapshot_digest != snapshot.digest
             or permit.target_ids != tuple(t.account.account_id for t in snapshot.targets)
-            or not permit.issued_at <= self.clock() < permit.expires_at
         ):
-            raise ValueError("Execution permit is stale, changed or outside scope")
+            raise ValueError("Execution permit changed or is outside scope")
+
+    def validate(
+        self, permit: ExecutionPermit | None, snapshot: PublishSnapshot, *, real: bool | None = None
+    ):
+        self.verify_integrity(permit, snapshot)
+        if not permit.issued_at <= self.clock() < permit.expires_at:
+            raise ValueError("Execution permit is stale")
         if real is not None and real == (permit.kind == "simulation"):
             raise ValueError("Permit is for a different execution environment")
         if snapshot.scheduled_at_utc is not None and snapshot.scheduled_at_utc <= self.clock():

@@ -1,5 +1,6 @@
 """Exact official CLI, explicit local channel, protected payloads, and fail-closed receipts."""
 
+import hashlib
 import json
 import os
 import re
@@ -64,8 +65,47 @@ class CliPublisher:
         self.journal = journal if journal is not None else MemoryUploadJournal()
         self.cancel = cancel or Event()
         self._version_hash = None
+        self.verification_context = None
+
+    def bind_controlled_test(self, service, gate, permit, snapshot):
+        if service.authority is not self.authority:
+            raise ValueError("Verification belongs to another process authority")
+        expected = service.controlled_gate(permit, snapshot, gate.evidence_id)
+        if gate != expected:
+            raise ValueError("Controlled gate is invalid")
+        self.verification_context = (service, gate, permit, snapshot)
+
+    def _controlled_identity(self, snapshot, permit):
+        self.authority.validate(permit, snapshot, real=True)
+        if self.verification_context is None:
+            if self.runner is run_command:
+                raise ValueError(
+                    "Real transport needs a verified cost boundary and controlled gate"
+                )
+            return
+        service, gate, original, bound = self.verification_context
+        if (
+            permit != original
+            or snapshot != bound
+            or gate != service.controlled_gate(permit, snapshot, gate.evidence_id)
+        ):
+            raise ValueError("Controlled execution scope changed")
+        client = hashlib.sha256(self.credentials.load().local_client_id.encode()).hexdigest()
+        if client != gate.client_sha256 or sha256_file(self.executable) != gate.cli_sha256:
+            raise ValueError("Controlled CLI binary/client identity changed")
 
     def _call(self, args, *, timeout=60):
+        if args and (args[0] == "upload" or args[0] == "publish" and "--dry-run" not in args):
+            if self.verification_context is not None:
+                service, gate, permit, snapshot = self.verification_context
+                self._controlled_identity(snapshot, permit)
+                deadline = min(gate.expires_at, permit.expires_at)
+                remaining = (deadline - self.authority.clock()).total_seconds()
+                if remaining <= 0:
+                    raise ValueError("Write deadline expired")
+                timeout = min(timeout, remaining)
+            elif self.runner is run_command:
+                raise ValueError("No verified cost boundary for real external writes")
         if self.cancel.is_set():
             raise ValueError("Publishing operation canceled before start")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("YIXIAOER_", "YXER_"))}
@@ -163,7 +203,7 @@ class CliPublisher:
             and accounts[t.account.account_id]["platform"] == t.account.platform
             for t in snapshot.targets
         )
-        return CapabilityReport(
+        report = CapabilityReport(
             checked_at=self.authority.clock(),
             tool_version=CLI_CONTRACT_VERSION,
             account_status="SUPPORTED" if good and valid else "UNKNOWN",
@@ -174,9 +214,29 @@ class CliPublisher:
             blockers=["free_write_and_platform_acceptance_not_verified"],
         )
 
+        if self.verification_context is not None:
+            service, gate, permit, bound = self.verification_context
+            self._controlled_identity(snapshot, permit)
+            report = service.prepare_controlled_report(
+                gate,
+                permit,
+                snapshot,
+                report,
+                cli_sha256=sha256_file(self.executable),
+                client_sha256=hashlib.sha256(
+                    self.credentials.load().local_client_id.encode()
+                ).hexdigest(),
+            )
+        return report
+
     def _upload(self, snapshot, permit, kind):
+        self._controlled_identity(snapshot, permit)
         cached = self.journal.get(snapshot.digest, kind)
         if cached is not None:
+            if self.verification_context is not None:
+                service, gate, bound_permit, bound_snapshot = self.verification_context
+                if not service.resource_reusable(gate, permit, snapshot, cached):
+                    raise ValueError("Cached upload lifetime/reuse contract is unverified")
             expected = snapshot.output.sha256 if kind == "video" else snapshot.cover.sha256
             if cached.sha256 != expected:
                 raise ValueError("Cached resource belongs to different media")
@@ -219,6 +279,7 @@ class CliPublisher:
         return receipt
 
     def prepare(self, snapshot, permit):
+        self._controlled_identity(snapshot, permit)
         self.authority.validate(permit, snapshot, real=True)
         self._files(snapshot)
         self._version()
@@ -252,6 +313,7 @@ class CliPublisher:
         return prepared
 
     def submit(self, prepared, permit, target_id):
+        self._controlled_identity(prepared.snapshot, permit)
         verify_prepared(prepared, self.authority)
         snapshot = prepared.snapshot
         self.authority.validate(permit, snapshot, real=True)

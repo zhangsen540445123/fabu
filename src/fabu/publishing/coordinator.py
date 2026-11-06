@@ -324,14 +324,16 @@ class PublicationCoordinator:
         self._hook("after_attempt", target.account.account_id)
         return attempt
 
-    def _preflight_problem(self, snapshot, report):
+    def _preflight_problem(self, snapshot, report, *, controlled=False):
         now = self.clock()
         if report.checked_at.utcoffset() is None or not -timedelta(
             seconds=5
         ) <= now - report.checked_at <= timedelta(minutes=5):
             return "preflight_expired"
         mode = "native_schedule" if snapshot.mode == "native_schedule" else "immediate"
-        if not can_enable_mode(report, mode, [t.account.account_id for t in snapshot.targets]):
+        if not controlled and not can_enable_mode(
+            report, mode, [t.account.account_id for t in snapshot.targets]
+        ):
             return "capabilities_unverified"
         if report.submission_strategy != "per_target":
             return "submission_strategy_unverified"
@@ -348,7 +350,18 @@ class PublicationCoordinator:
                     return "schedule_outside_platform_window"
         return None
 
-    def run_submission(self, job_id, permit, publisher):
+    def run_submission(self, job_id, permit, publisher, *, verification=None, controlled_gate=None):
+        def preflight_problem(snapshot, report):
+            controlled = bool(
+                verification is not None
+                and controlled_gate is not None
+                and verification.authority is self.authority
+                and verification.allow_controlled(controlled_gate, permit, snapshot, report)
+            )
+            if controlled_gate is not None and not controlled:
+                return "controlled_gate_invalid"
+            return self._preflight_problem(snapshot, report, controlled=controlled)
+
         self._owner()
         execution = "simulation" if permit.kind == "simulation" else "live"
         if getattr(publisher, "execution_scope", None) != execution:
@@ -365,7 +378,7 @@ class PublicationCoordinator:
         self._activate(run, snapshot)
         try:
             report = publisher.preflight(snapshot)
-            issue = self._preflight_problem(snapshot, report)
+            issue = preflight_problem(snapshot, report)
             if issue:
                 return self._finish(run, "PAUSED", issue)
             self.authority.validate(permit, snapshot, real=execution == "live")
@@ -385,10 +398,10 @@ class PublicationCoordinator:
                 if previous and previous[-1].state in PROVEN:
                     continue
                 self.authority.validate(permit, snapshot, real=execution == "live")
-                issue = self._preflight_problem(snapshot, report)
+                issue = preflight_problem(snapshot, report)
                 if issue == "preflight_expired":
                     report = publisher.preflight(snapshot)
-                    issue = self._preflight_problem(snapshot, report)
+                    issue = preflight_problem(snapshot, report)
                 if issue:
                     return self._finish(run, "PAUSED", issue)
                 self._files_and_approval(snapshot)

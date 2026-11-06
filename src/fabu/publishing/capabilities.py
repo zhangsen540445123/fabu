@@ -109,6 +109,8 @@ def can_enable_mode(report: CapabilityReport, mode: str, target_ids: list[str]) 
         report.file_limits,
         report.hevc,
         report.source_declarations,
+        report.temporary_storage,
+        report.categories,
         getattr(report, mode),
     )
     return all(value == "SUPPORTED" for value in required) and all(
