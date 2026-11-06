@@ -55,6 +55,8 @@ class CliPublisher:
             raise ValueError("Publishing requires explicitly configured media tools")
         if runner is run_command and not getattr(journal, "durable", False):
             raise ValueError("Real publishing requires a durable upload journal")
+        if runner is run_command and getattr(journal, "scope", None) != "live":
+            raise ValueError("Real publishing requires a live-scoped upload journal")
         self.media_tools, self.credentials, self.workspace = media_tools, credentials, workspace
         self.authority, self.runner = authority, runner
         self.journal = journal if journal is not None else MemoryUploadJournal()

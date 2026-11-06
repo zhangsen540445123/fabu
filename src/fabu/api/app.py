@@ -25,6 +25,7 @@ from fabu.media.bootstrap import configured_service
 from fabu.media.controller import MediaController
 from fabu.presets import PresetStore
 from fabu.publishing.capabilities import CapabilityReport
+from fabu.publishing.journal import SqliteUploadJournal
 from fabu.settings import Settings, check_environment
 from fabu.store import JobStore
 
@@ -67,11 +68,16 @@ def create_app(
     app.state.presets = PresetStore(store, app.state.assets)
     app.state.approvals = PreviewApprovalStore(store, app.state.presets, app.state.assets)
     app.state.credentials = CredentialStore(settings.state_dir / "credentials")
+
+    def startup_cleanup():
+        app.state.credentials.cleanup_stale_sessions()
+        SqliteUploadJournal.recover_interrupted(store)
+
     app.state.media_controller = MediaController(
         store,
         service_factory or (lambda cancel: configured_service(app, cancel)),
         settings.data_dir / "previews",
-        startup_cleanup=app.state.credentials.cleanup_stale_sessions,
+        startup_cleanup=startup_cleanup,
     )
     app.state.capabilities = CapabilityReport(checked_at=datetime.now(UTC))
     with store.connection() as db:

@@ -318,3 +318,13 @@ def test_signed_snapshot_does_not_allow_semantically_divergent_forms(publishing_
     snapshot = snapshot.model_copy(update={"digest": publish_snapshot_digest(snapshot)})
     with pytest.raises(ValueError, match="schedule"):
         verify_publish_snapshot(snapshot)
+
+
+def test_snapshot_video_identity_cannot_disagree_with_source_url(publishing_context):
+    from fabu.publishing.models import publish_snapshot_digest, verify_publish_snapshot
+
+    snapshot = build(publishing_context)
+    changed = snapshot.model_copy(update={"video_id": "other-id-12"})
+    changed = changed.model_copy(update={"digest": publish_snapshot_digest(changed)})
+    with pytest.raises(ValueError, match="source"):
+        verify_publish_snapshot(changed)

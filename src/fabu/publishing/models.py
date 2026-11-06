@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from fabu.assets import AssetRef
 from fabu.media.models import OutputManifest
+from fabu.media.youtube import parse_youtube_url
 
 
 class TopicSelection(BaseModel):
@@ -149,6 +150,8 @@ def verify_publish_snapshot(snapshot: PublishSnapshot) -> None:
     validated = PublishSnapshot.model_validate(snapshot.model_dump())
     if validated.digest != publish_snapshot_digest(validated):
         raise ValueError("Publish snapshot changed after preparation")
+    if parse_youtube_url(validated.source_url) != validated.video_id:
+        raise ValueError("Snapshot video identity disagrees with source URL")
     when = validated.scheduled_at_utc
     if (validated.mode == "native_schedule") != (when is not None):
         raise ValueError("Snapshot schedule and publish mode disagree")

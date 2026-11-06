@@ -383,3 +383,20 @@ def test_native_schedule_can_be_simulated_without_a_real_permit(publishing_conte
     receipt = gateway.submit(prepared, scope, snapshot.targets[0].account.account_id)
     assert receipt.state == "SCHEDULED" and receipt.actual_channel == "simulation"
     assert receipt.scheduled_at_utc == when
+
+
+def test_real_transport_cannot_use_simulation_receipts(gateway_setup, publishing_context):
+    from fabu.publishing.cli_gateway import CliPublisher
+    from fabu.publishing.journal import SqliteUploadJournal
+
+    snapshot, gateway, authority, _, _ = gateway_setup
+    journal = SqliteUploadJournal(publishing_context[0], snapshot, scope="simulation")
+    with pytest.raises(ValueError, match="live"):
+        CliPublisher(
+            gateway.package_root,
+            gateway.credentials,
+            gateway.media_tools,
+            gateway.workspace,
+            authority,
+            journal=journal,
+        )
