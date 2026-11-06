@@ -61,6 +61,8 @@ def render(
         if sha256_file(asset.local_path) != plan.asset_hashes.get(asset.id):
             raise RenderFailed("Auxiliary asset changed after compilation")
     scan_frame_geometry(plan.source, lambda args: tools.probe(args, cancel))
+    for info in plan.video_inputs.values():
+        scan_frame_geometry(info, lambda args: tools.probe(args, cancel))
     if cancel.is_set():
         raise RenderFailed("Rendering canceled during source verification")
     identifier = str(uuid4())

@@ -58,11 +58,11 @@
 
 **Interfaces：** 定义OutputProfile/MediaPlan/RenderCommand/OutputManifest；`build_baseline_plan(source: MediaInfo) -> MediaPlan`；`render(plan: MediaPlan, workspace: Path, cancel: Event) -> Path`返回未验证临时产物；`validate_output(candidate: Path, plan: MediaPlan) -> OutputManifest`；`promote_output(manifest: OutputManifest, destination: Path) -> OutputManifest`同卷原子提升并更新路径。
 
-- [ ] RED：`test_baseline_preserves_approved_profile`断言CRF20/fast/30fps/yuv420p且无附加效果；`test_failed_render_cannot_be_published`断言退出失败、磁盘不足、截断文件均无正式OutputManifest；`test_source_hash_unchanged`断言前后摘要相同。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_baseline.py' 'D:\auto-deploy\tests\media\test_render_recovery.py' -q`观察RED。
-- [ ] 实现串行转码、真实进度与空间预检/持续检查；暂按已有基准CPU线程限制pools6/frame-threads2，不默启GPU。音频与画面按探测结果，不用固定44100强转所有源。
-- [ ] 独立全解码并检查帧率/偶数宽高/SAR/旋转/色彩/音轨。工程初值：视频时长误差≤2帧，AAC端点误差≤2帧+2×1024/采样率秒；这只验时间线边界，不证明内容同步，另用闪光/点击合成素材测试同步。失败不提升、不回退原片。
-- [ ] GREEN：同命令PASS；实际生成同基准区间03:00–03:15（450视频帧），与原验收样片对照；再用完整源视频验证时长/解码/原音与资源占用。编码时长/体积只报告实测，不外推样片压缩比例。
-- [ ] 提交`feat: render and validate baseline media outputs`，限定Files；S2交付是本地成片，不是自动发布。
+- [x] RED：`test_baseline_preserves_approved_profile`断言CRF20/fast/30fps/yuv420p且无附加效果；`test_failed_render_cannot_be_published`断言退出失败、磁盘不足、截断文件均无正式OutputManifest；`test_source_hash_unchanged`断言前后摘要相同。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_baseline.py' 'D:\auto-deploy\tests\media\test_render_recovery.py' -q`观察RED。
+- [x] 实现串行转码、真实进度与空间预检/持续检查；暂按已有基准CPU线程限制pools6/frame-threads2，不默启GPU。音频与画面按探测结果，不用固定44100强转所有源。
+- [x] 独立全解码并检查帧率/偶数宽高/SAR/旋转/色彩/音轨。工程初值：视频时长误差≤2帧，AAC端点误差≤2帧+2×1024/采样率秒；这只验时间线边界，不证明内容同步，另用闪光/点击合成素材测试同步。失败不提升、不回退原片。
+- [x] GREEN：同命令PASS；实际生成同基准区间03:00–03:15（450视频帧），与原验收样片对照；再用完整源视频验证时长/解码/原音与资源占用。编码时长/体积只报告实测，不外推样片压缩比例。
+- [x] 提交`feat: render and validate baseline media outputs`，限定Files；S2交付是本地成片，不是自动发布。
 
 ### Task 4: M04 — 步骤模型、顺序校验与计划编译
 
@@ -82,11 +82,11 @@
 
 **Interfaces：** `compile_geometry(steps: list[StepSpec], input_size: Size) -> GeometryResult`；结果含video_filters/output_size/coordinate_map，由compiler消费。crop归一化矩形相对当前已处理画面，布局可选16:9/9:16/1:1，主体等比容纳，上/下各至多一静态图。
 
-- [ ] RED：`test_crop_uses_post_rotation_coordinates`检查90度非对称素材裁切区域正确；`test_explicit_crop_changes_output_ratio`不恢复原比例；`test_layout_does_not_stretch_subject`保持圆形不成椭圆；`test_color_defaults_are_identity`亮度0、对比度1、饱和度1无额外效果。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_geometry_filters.py' -q`观察RED。
-- [ ] 实现crop/hflip/基础色调/布局，参数数值有限且有界；首次工程范围亮度[-1,1]、对比度[0,2]、饱和度[0,3]，越界拒绝不钳制；布局明确显示留白和主体缩小。
-- [ ] 将合成四角标记/圆形/彩条生成固定短片验证滤镜效果；测试flip前后裁切的差异是用户顺序决定，不默认改正内容。
-- [ ] GREEN：同命令PASS和`media`帧图检查通过；无布局/裁切情况下保持第4节默认无新增边框。
-- [ ] 提交`feat: add explicit frame editing and canvas layouts`，限定Files。
+- [x] RED：`test_crop_uses_post_rotation_coordinates`检查90度非对称素材裁切区域正确；`test_explicit_crop_changes_output_ratio`不恢复原比例；`test_layout_does_not_stretch_subject`保持圆形不成椭圆；`test_color_defaults_are_identity`亮度0、对比度1、饱和度1无额外效果。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_geometry_filters.py' -q`观察RED。
+- [x] 实现crop/hflip/基础色调/布局，参数数值有限且有界；首次工程范围亮度[-1,1]、对比度[0,2]、饱和度[0,3]，越界拒绝不钳制；布局明确显示留白和主体缩小。
+- [x] 将合成四角标记/圆形/彩条生成固定短片验证滤镜效果；测试flip前后裁切的差异是用户顺序决定，不默认改正内容。
+- [x] GREEN：同命令PASS和`media`帧图检查通过；无布局/裁切情况下保持第4节默认无新增边框。
+- [x] 提交`feat: add explicit frame editing and canvas layouts`，限定Files。
 
 ### Task 6: M06 — 截取、变速与音频效果
 
@@ -94,11 +94,11 @@
 
 **Interfaces：** `compile_timing(info: MediaInfo, steps: list[StepSpec]) -> TimingResult`；`map_main_time(source_ms: int, trim_start_ms: int, speed: Fraction) -> int`；TimingResult含main_duration_ms/video_filters/audio_filters。仅一连续片段，速度0.5–2.0，main/full音量/淡入淡出按设计作用域。
 
-- [ ] RED：`test_trim_speed_expected_duration`断言原片10–30秒截取后1.25倍=16000ms；`test_audio_and_video_share_timeline`同步闪光/点击在变速后误差≤1视频帧+1AAC帧；`test_bad_time_windows_rejected`拒绝结束越界、零长度、淡入淡出越界。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_time_filters.py' -q`观察RED。
-- [ ] 实现视频/音频同时截取和时间戳归零、保持音高的音频变时长；30fps规范化不额外改总速度；无音轨时按输入门槛暂停，不合成主片声音。
-- [ ] 音量/淡入淡出默认关闭，main/full同时启用显示叠加效果；左右声道不因水平翻转被交换；不自动降噪、标准化或混入音乐。
-- [ ] GREEN：同命令PASS并验证0.5/1/2倍、44.1/48kHz、单/双声道和长片末尾；确认片头片尾速度不受主片速度影响由M08组合测覆盖。
-- [ ] 提交`feat: add synchronized timing and audio controls`，限定Files。
+- [x] RED：`test_trim_speed_expected_duration`断言原片10–30秒截取后1.25倍=16000ms；`test_audio_and_video_share_timeline`同步闪光/点击在变速后误差≤1视频帧+1AAC帧；`test_bad_time_windows_rejected`拒绝结束越界、零长度、淡入淡出越界。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_time_filters.py' -q`观察RED。
+- [x] 实现视频/音频同时截取和时间戳归零、保持音高的音频变时长；30fps规范化不额外改总速度；无音轨时按输入门槛暂停，不合成主片声音。
+- [x] 音量/淡入淡出默认关闭，main/full同时启用显示叠加效果；左右声道不因水平翻转被交换；不自动降噪、标准化或混入音乐。
+- [x] GREEN：同命令PASS并验证0.5/1/2倍、44.1/48kHz、单/双声道和长片末尾；确认片头片尾速度不受主片速度影响由M08组合测覆盖。
+- [x] 提交`feat: add synchronized timing and audio controls`，限定Files。
 
 ### Task 7: M07 — 图片/文字图层与导入字幕
 
@@ -106,11 +106,11 @@
 
 **Interfaces：** `compile_layers(steps: list[StepSpec], canvas: Size, scope_duration_ms: int, assets: dict[str,AssetRef]) -> LayerResult`；`parse_srt(path: Path, scope_duration_ms: int) -> list[Cue]`；LayerResult含filters/受控text文件，Cue记录start/end/text。不提供原始滤镜字段。
 
-- [ ] RED：`test_layer_order_and_scope`断言后层覆盖前层且main层不出现在片头；`test_literal_text_cannot_inject_filter`检查含`':;[]\\`及中文emoji的文本不改变过滤图；`test_srt_time_uses_edited_scope`按编辑后时间轴校验，越界拒绝；`test_missing_font_and_bad_utf8_fail_preflight`不静默替代。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_layers.py' 'D:\auto-deploy\tests\media\test_subtitles.py' -q`观察RED。
-- [ ] 实现PNG/JPEG静态层、文字层位置/尺寸/透明度[0,1]/时间/层次，文本写入受控UTF-8文件；所有素材/字体通过AssetRef，不直接信任用户路径或远程URL。
-- [ ] SRT仅UTF-8、有效递增区间、明确main/full计时；支持多行中文，字体存在性和所需能力提前检查；无自动ASR/翻译。SSRF/脚本能力不能经字幕样式或素材引用引入。
-- [ ] GREEN：同命令PASS；渲染并检查图层起止前/中/后帧、透明度和层级，特殊文字必须可见且没有副作用；兼容浏览器代理不替代正式画质样片。
-- [ ] 提交`feat: add safe layers and imported subtitles`，限定Files。
+- [x] RED：`test_layer_order_and_scope`断言后层覆盖前层且main层不出现在片头；`test_literal_text_cannot_inject_filter`检查含`':;[]\\`及中文emoji的文本不改变过滤图；`test_srt_time_uses_edited_scope`按编辑后时间轴校验，越界拒绝；`test_missing_font_and_bad_utf8_fail_preflight`不静默替代。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_layers.py' 'D:\auto-deploy\tests\media\test_subtitles.py' -q`观察RED。
+- [x] 实现PNG/JPEG静态层、文字层位置/尺寸/透明度[0,1]/时间/层次，文本写入受控UTF-8文件；所有素材/字体通过AssetRef，不直接信任用户路径或远程URL。
+- [x] SRT仅UTF-8、有效递增区间、明确main/full计时；支持多行中文，字体存在性和所需能力提前检查；无自动ASR/翻译。SSRF/脚本能力不能经字幕样式或素材引用引入。
+- [x] GREEN：同命令PASS；渲染并检查图层起止前/中/后帧、透明度和层级，特殊文字必须可见且没有副作用；兼容浏览器代理不替代正式画质样片。
+- [x] 提交`feat: add safe layers and imported subtitles`，限定Files。
 
 ### Task 8: M08 — 片头片尾与整片合成
 
@@ -118,11 +118,11 @@
 
 **Interfaces：** `compose_segments(main: MediaPlan, intro: AssetRef | None, outro: AssetRef | None, params: dict, full_steps: list[StepSpec]) -> MediaPlan`；使用M01探测和已有滤镜模块，不重新手写另套转码参数。
 
-- [ ] RED：`test_total_duration_with_intro_speed_outro`断言2秒片头+上述16000ms主片+3秒片尾=21000ms；`test_full_layers_include_intro_main_layers_do_not`检查作用域；`test_aspect_mismatch_requires_explicit_fit`拒绝默认裁切；`test_silent_auxiliary_does_not_truncate_audio`验证主片没有被最短音轨截断。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_composition.py' -q`观察RED。
-- [ ] 实现各一个静态图/本地视频的硬切拼接，图片时长显式指定；辅助视频接受同样的色彩/旋转/音频门槛，几何差异只有用户显式同意留白适配时才能容纳。
-- [ ] 允许辅助段静音补齐时间，统一到主片受支持音频参数；主片图层在合成前、全片层在合成后，不强制多轮有损导出。
-- [ ] GREEN：同命令PASS并检查拼接边界前后帧/声音；M03–M07全部回归通过；全片和边界预览时间一致的用例留M09。
-- [ ] 提交`feat: compose intros outros and scoped effects`，限定Files。
+- [x] RED：`test_total_duration_with_intro_speed_outro`断言2秒片头+上述16000ms主片+3秒片尾=21000ms；`test_full_layers_include_intro_main_layers_do_not`检查作用域；`test_aspect_mismatch_requires_explicit_fit`拒绝默认裁切；`test_silent_auxiliary_does_not_truncate_audio`验证主片没有被最短音轨截断。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_composition.py' -q`观察RED。
+- [x] 实现各一个静态图/本地视频的硬切拼接，图片时长显式指定；辅助视频接受同样的色彩/旋转/音频门槛，几何差异只有用户显式同意留白适配时才能容纳。
+- [x] 允许辅助段静音补齐时间，统一到主片受支持音频参数；主片图层在合成前、全片层在合成后，不强制多轮有损导出。
+- [x] GREEN：同命令PASS并检查拼接边界前后帧/声音；M03–M07全部回归通过；全片和边界预览时间一致的用例留M09。
+- [x] 提交`feat: compose intros outros and scoped effects`，限定Files。
 
 ### Task 9: M09 — 预览确认、缓存与处理快照
 

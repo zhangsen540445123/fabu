@@ -3,7 +3,7 @@
 from fractions import Fraction
 from pathlib import Path
 
-from fabu.media.geometry import fit_output
+from fabu.media.geometry import Size, fit_output
 from fabu.media.models import (
     AudioProfile,
     MediaPlan,
@@ -16,9 +16,7 @@ from fabu.media.models import (
 from fabu.media.probe import MediaInfo, validate_supported_input
 
 
-def build_baseline_plan(source: MediaInfo) -> MediaPlan:
-    validate_supported_input(source)
-    size = fit_output(source)
+def source_video_filters(source: MediaInfo, size: Size) -> list[str]:
     filters = ["setpts=PTS-STARTPTS"]
     if source.rotation_deg == 90:
         filters.append("transpose=cclock")
@@ -35,6 +33,10 @@ def build_baseline_plan(source: MediaInfo) -> MediaPlan:
             "setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709",
         ]
     )
+    return filters
+
+
+def source_audio_filters(source: MediaInfo) -> list[str]:
     audio = source.audio
     offset = audio.start_time - source.start_time
     audio_filters = ["asetpts=PTS-STARTPTS"]
@@ -43,6 +45,16 @@ def build_baseline_plan(source: MediaInfo) -> MediaPlan:
     elif offset > 0:
         # Preserve a real source audio offset rather than silently moving it to video t=0.
         audio_filters.append(f"adelay={round(offset * audio.sample_rate)}S:all=1")
+    return audio_filters
+
+
+def build_baseline_plan(source: MediaInfo) -> MediaPlan:
+    validate_supported_input(source)
+    size = fit_output(source)
+    filters = source_video_filters(source, size)
+    audio_filters = source_audio_filters(source)
+    audio = source.audio
+    offset = audio.start_time - source.start_time
     plan = MediaPlan(
         digest="",
         source=source,
@@ -85,18 +97,13 @@ def build_render_command(
         str(plan.source.path),
     ]
     for asset in plan.asset_inputs:
-        inputs.extend(
-            [
-                "-loop",
-                "1",
-                "-framerate",
-                "30",
-                "-protocol_whitelist",
-                "file,pipe",
-                "-i",
-                str(asset.local_path),
-            ]
-        )
+        if asset.media_type == "image":
+            inputs.extend(["-loop", "1", "-framerate", "30"])
+        elif asset.media_type == "video":
+            inputs.extend(["-noautorotate", "-display_rotation", "0"])
+        else:
+            raise ValueError("Unsupported render input type")
+        inputs.extend(["-protocol_whitelist", "file,pipe", "-i", str(asset.local_path)])
     if plan.video_graph:
         processing = [
             "-filter_complex_threads",
@@ -108,7 +115,15 @@ def build_render_command(
         ]
     else:
         processing = ["-map", f"0:{plan.source.video_stream_index}", "-vf", ",".join(video_filters)]
-    processing += ["-map", f"0:{plan.source.audio.stream_index}", "-af", ",".join(audio_filters)]
+    if plan.complex_audio:
+        processing += ["-map", "[aout]"]
+    else:
+        processing += [
+            "-map",
+            f"0:{plan.source.audio.stream_index}",
+            "-af",
+            ",".join(audio_filters),
+        ]
     output = [
         "-c:v",
         profile.codec,

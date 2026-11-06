@@ -143,7 +143,7 @@ def test_preset_save_rejects_unknown_raw_or_invalid_output(tmp_path):
             presets.save_draft(None, doc)
 
 
-def test_unimplemented_registered_module_is_not_silently_skipped(tmp_path):
+def test_auxiliary_video_without_probe_is_not_silently_skipped(tmp_path):
     from test_baseline import info_fixture
 
     from fabu.assets import AssetRef
@@ -158,7 +158,7 @@ def test_unimplemented_registered_module_is_not_silently_skipped(tmp_path):
         media_type="video",
         size_bytes=source.path.stat().st_size,
     )
-    with pytest.raises(PlanInvalid, match="not yet available"):
+    with pytest.raises(PlanInvalid, match="probe"):
         compile_plan(
             InputBundle(source=source, assets={"intro": ref}),
             preset([step("intro", scope="full", assets=["intro"])]),

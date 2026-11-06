@@ -13,7 +13,7 @@ from fabu.assets import AssetRef
 from fabu.media.geometry import Size
 from fabu.media.probe import MediaInfo
 
-ENGINE_VERSION = "pipeline-4"
+ENGINE_VERSION = "pipeline-5"
 
 
 class PlanInvalid(ValueError):
@@ -64,6 +64,9 @@ class MediaPlan(BaseModel):
     text_files: dict[str, str] = Field(default_factory=dict)
     font_copies: dict[str, str] = Field(default_factory=dict)
     layer_summary: list[dict] = Field(default_factory=list)
+    composition_summary: list[dict] = Field(default_factory=list)
+    video_inputs: dict[str, MediaInfo] = Field(default_factory=dict)
+    complex_audio: bool = False
     video_graph: str | None = None
     geometry_summary: dict = Field(default_factory=dict)
     timing_summary: dict = Field(default_factory=dict)
@@ -101,3 +104,4 @@ class InputBundle(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     source: MediaInfo
     assets: dict[str, AssetRef] = Field(default_factory=dict)
+    asset_media: dict[str, MediaInfo] = Field(default_factory=dict)

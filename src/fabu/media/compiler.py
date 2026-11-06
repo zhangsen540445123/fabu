@@ -8,6 +8,7 @@ from PIL import Image
 
 from fabu.assets import assert_no_reparse, sha256_file
 from fabu.media.baseline import build_baseline_plan
+from fabu.media.composition import compose_segments
 from fabu.media.filters_geometry import compile_geometry, contain_size
 from fabu.media.filters_layers import compile_layers
 from fabu.media.filters_time import compile_timing
@@ -62,6 +63,8 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
             "image_layer",
             "text_layer",
             "subtitles",
+            "intro",
+            "outro",
         }
         for step in active
     ):
@@ -75,7 +78,7 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
         assert_no_reparse(asset.local_path)
         if sha256_file(asset.local_path) != asset.sha256:
             raise PlanInvalid("Asset integrity is invalid")
-    timing = compile_timing(bundle.source, active)
+    timing = compile_timing(bundle.source, [s for s in active if s.scope == "main"])
     geometry_steps = [step for step in active if step.kind in {"crop", "flip", "color", "layout"}]
     if geometry_steps:
         source = bundle.source
@@ -172,7 +175,11 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
                 "timing_summary": timing.model_dump(mode="json"),
             }
         )
-    layer_steps = [s for s in active if s.kind in {"image_layer", "text_layer", "subtitles"}]
+    layer_steps = [
+        s
+        for s in active
+        if s.scope == "main" and s.kind in {"image_layer", "text_layer", "subtitles"}
+    ]
     if layer_steps:
         layers = compile_layers(
             layer_steps,
@@ -202,5 +209,17 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
             "asset_hashes": asset_hashes,
             "preset_digest": semantic_fingerprint(preset, asset_hashes, ENGINE_VERSION),
         }
+    )
+    segments = {s.kind: s for s in active if s.kind in {"intro", "outro"}}
+    full_steps = [s for s in active if s.scope == "full" and s.kind not in {"intro", "outro"}]
+    plan = plan.model_copy(update={"digest": plan_digest(plan)})
+    plan = compose_segments(
+        plan,
+        bundle.assets[segments["intro"].asset_ids[0]] if "intro" in segments else None,
+        bundle.assets[segments["outro"].asset_ids[0]] if "outro" in segments else None,
+        {kind: s.params for kind, s in segments.items()},
+        full_steps,
+        assets=bundle.assets,
+        asset_media=bundle.asset_media,
     )
     return plan.model_copy(update={"digest": plan_digest(plan)})
