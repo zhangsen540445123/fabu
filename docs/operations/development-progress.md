@@ -1,29 +1,48 @@
 # Fabu v1 开发进度
 
-日期：2026-11-07。目标模式active，预算80,000,000 tokens。整体未完成。
+日期：2026-11-07。目标模式active，预算80,000,000 tokens。整体未完成，不能缩减为只做本地处理。
 
 ## 工作区
 - 实施根：`C:\Users\77465\.codex\worktrees\fabu-v1\auto-deploy`
 - 分支：`codex/fabu-v1`；基准`3c04d39`；未推送/合并。
 - 原目录`D:\auto-deploy`的22项删除不动。旧GUI-only实现只在隔离分支退场。
-- 计划中的`D:\auto-deploy`代码路径在执行时映射到上述隔离根，外部媒体/凭证路径不替换。
+- 计划的代码路径前缀在执行时映射到实施根，外部媒体/凭证路径不替换。
 
-## 已完成
-F01–F06：配置/环境、受控工具进程、只读CLI能力报告、SQLite任务与恢复、不可变素材/预设、本地受保护API及基础网页。
+## 完成与进行中
+- F01–F06完成：配置/环境、受控工具进程、只读CLI能力、SQLite任务/恢复、不可变素材/预设、本地受保护API与基础网页。
+- M01完成：媒体探测、色彩/音轨门槛、SAR/旋转/尺寸、逐帧动态尺寸检查。真实合成素材验证90/180/270度和SAR16:15，用户原片探测成功。
+- M02代码及30项测试通过，但**实际YouTube视频下载未通过**：示例L6imSiJLd9Q被要求登录验证。原封面真实读取1280×720/189498字节。源缓存可在封面失败后复用，真实下载问题仍是整链验收未完成项。
+- M03代码和短片集成已通过；**完整原片转码正在运行**，尚未完成全片验证，因此不得标任务完成。
+- M04完成：内置步骤schema、顺序/作用域/参数/素材引用校验、纯编译与预设指纹。具体编辑执行器由M05–M08接入；尚未实现的已启用步骤会报错，不偷偷忽略。
+- M05已提取任务brief，尚未写实现；下一步从画面裁切/翻转/调色/画布开始。
 
-验证：81 Python tests、5前端tests、类型检查、构建及1个真实Chromium端到端测试通过。桌面与390px界面截图已检查；窄屏任务表采用横向滚动，页面无溢出。F06完整复验命令/结果见同计划的git-ignored `.superpowers/sdd/2026-11-07-fabu-foundation/progress.md`。
+## 验证证据
+最新全Python回归176项通过，Ruff通过；F06前端5项、类型检查、构建、Chromium端到端1项已通过。对应日志在各计划的`.superpowers/sdd/`目录。
 
-## 下一步
-M01→M02→M03：媒体探测/比例、单条视频下载/原封面、基础渲染与校验；之后M04–M10流水线与预览，P01–P08发布/交付。
+新基础引擎生成用户原片03:00–03:15区间，450帧，13,866,740字节。与已验收CRF20样片解码视频比较SSIM All=1.000000；这是这段视频帧的一致性结果，不是原创度或质量百分比。左右画面对比图已查看。
+
+## 必须保留并继续观察的后台任务
+- `functions.exec_command`会话 **60428**，脚本`.superpowers/sdd/2026-11-07-fabu-media-pipeline/verify-real-render.py`。
+- 2026-11-07 03:52:29实查：Python父进程19796，FFmpeg子进程27216仍存在；progress=continue，7390帧，out_time247.095秒，约31%，speed0.47x。
+- 先poll相同会话，不因对话/工具观察超时重启。最终状态只有会话退出或进程证据才有效。
+- 输入：用户已授权的约797.1秒本地原片；不上传、不覆盖源。
+- 输出目录：`.superpowers/sdd/2026-11-07-fabu-media-pipeline/real-render/`。
+- 已有`sample-crf20.mp4`/`sample-evidence.json`；预期最终`full-crf20.mp4`/`full-evidence.json`/`summary.json`仅在全片验证成功后创建。
+- 此独立实测进程加载的是M03版本的baseline/model；后续M04添加了可选preset_digest字段，不改变过滤参数。实测不当作可复用正式任务缓存。
 
 ## 重要裁定
-- `JobSnapshot.revision`用于状态CAS；`content_revision`用于内容/媒体版本。TargetAttempt.revision等于content_revision，后续编译/发布不得混用。
-- 低层record_attempt只持久化/冻结，不是发布授权或幂等网关；P03必须补完整协调门禁。
-- 首次启动创建的基础预设仍是未验收的草稿；旧FFmpeg样片不能代替新引擎回归。
-- UI此阶段只保存本地任务；未接处理器，不假装下载/渲染完成。真实发布始终关闭。
-- 查询发现百家号库存新增，不增加第四发布目标。原三平台仍为既定范围。
-- 免费上传/扣次、HEVC限制和平台原生预约仍UNKNOWN。G1未找到已证实的收费硬限制，可继续离线开发；G2测试要另行确切授权。
-- 本次未上传、投稿、预约或修改平台账号。此前泄露旧Key是否撤销未知，禁止重复输出。
+- `JobSnapshot.revision`用于状态CAS；`content_revision`用于内容/媒体版本。TargetAttempt.revision等于content_revision；后续编译/发布不得混用。
+- 低层record_attempt不是发布授权或幂等网关；P03必须补完整协调门禁。
+- 首次启动的基础预设仍未由新产品流程确认；旧手工样片不能替代新引擎验收。
+- Runtime MediaTools注入明确可执行路径；禁止PATH搜索/自动升级；单条下载关闭用户配置/cookies/浏览器登录态/自动更新/插件/远程组件。依赖已锁定yt-dlp2026.10.26和yt-dlp-ejs0.8.0。
+- 无声媒体可探测为audio=None供辅助片段使用；主片必须暂停，不能默许静音发布。
+- schema/流程门槛不会因为测试绿色自动解锁真实发布；免费额度/HEVC限制/平台原生预约仍UNKNOWN。
+- 发现百家号库存新增，但只保留用户原定三个发布目标。
+- 本次未上传/投稿/预约。真实写操作要具体媒体、账号、时间、次数授权。此前泄露旧Key撤销状态未知，禁止重复输出。
 
-## 恢复上下文
-先读本文件、当前子计划、对应`.superpowers/sdd/<plan-name>/progress.md`和git log。已完成任务不要重新实现。每任务RED→GREEN，提交后用executing-plans/task-done记录；媒体与发布计划各有独立ledger。
+## 恢复步骤
+1. 读取本文件、当前子计划、对应`.superpowers/sdd/<plan-name>/progress.md`和git log；不重做已完成任务。
+2. **先查询会话60428**；若终止读取真实异常或最终证据，不凭候选文件存在猜成功。
+3. 持续执行M05–M10，保留M02网络验收未完成与M03全片验证等待的独立状态。
+4. 运行媒体测试必须设置FABU_TEST_FFMPEG/FABU_TEST_FFPROBE到已核对的`D:\devtools\idm\video\Fabu-comparison-20261107\tools`内exe；缺工具不能用skip充当验收。
+5. 全目标最后仍需P01–P08与独立整体代码审阅。只有全部要求有真实证据才完成goal。
