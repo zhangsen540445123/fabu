@@ -34,11 +34,11 @@
 
 **Interfaces：** 定义MediaInfo/Size；`probe_media(path: Path, runner: Callable) -> MediaInfo`；`fit_output(info: MediaInfo, crop_ratio: Fraction | None = None) -> Size`。只允许本地文件，不能让ffprobe任意取网；attached-picture不当主视频轨，多个无法明确选择的主轨暂停。
 
-- [ ] RED：`test_geometry_matrix`断言16:9→(2560,1440)、4:3→(1920,1440)、9:16→(1440,2560)、1:1→(1440,1440)；1280×720+90度旋转输出(1440,2560)；720×576 SAR16/15得到4:3。`test_hdr_or_ambiguous_tracks_pause`拒绝未支持HDR/多音轨/不明颜色。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_probe.py' -q`观察RED。
-- [ ] 实现rotation/display matrix/SAR规范化和偶数尺寸舍入：统一比例因子，最近偶数，约束不越目标框；极窄输入产生小于2像素的边时拒绝，不拉伸；非直角/动态分辨率暂停。
-- [ ] 音频保留44.1/48kHz、单/双声道；无声要求显式处理，多声道/多轨不丢弃。默认色彩支持必须有证据，未知不简单贴BT.709标签。
-- [ ] GREEN：同命令PASS，并用带四角文字的合成旋转/SAR短素材做`media`集成测试；没有可用ffprobe不得略过实机验收。
-- [ ] 提交`feat: probe media and preserve display geometry`，只stageFiles及必要包文件。
+- [x] RED：`test_geometry_matrix`断言16:9→(2560,1440)、4:3→(1920,1440)、9:16→(1440,2560)、1:1→(1440,1440)；1280×720+90度旋转输出(1440,2560)；720×576 SAR16/15得到4:3。`test_hdr_or_ambiguous_tracks_pause`拒绝未支持HDR/多音轨/不明颜色。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_probe.py' -q`观察RED。
+- [x] 实现rotation/display matrix/SAR规范化和偶数尺寸舍入：统一比例因子，最近偶数，约束不越目标框；极窄输入产生小于2像素的边时拒绝，不拉伸；非直角/动态分辨率暂停。
+- [x] 音频保留44.1/48kHz、单/双声道；无声要求显式处理，多声道/多轨不丢弃。默认色彩支持必须有证据，未知不简单贴BT.709标签。
+- [x] GREEN：同命令PASS，并用带四角文字的合成旋转/SAR短素材做`media`集成测试；没有可用ffprobe不得略过实机验收。
+- [x] 提交`feat: probe media and preserve display geometry`，只stageFiles及必要包文件。
 
 ### Task 2: M02 — YouTube下载与原缩略图
 
@@ -70,11 +70,11 @@
 
 **Interfaces：** 定义InputBundle，复用F05的StepSpec信封并登记类型化参数；`validate_steps(steps: list[StepSpec]) -> list[ValidationIssue]`；`compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan`；`build_baseline_plan`逻辑复用M03而非再写一套。
 
-- [ ] RED：`test_all_disabled_matches_baseline`断言输出配置/几何/时间与基础计划一致；`test_invalid_order_is_rejected_not_sorted`断言翻转位于文字之后被拒绝且原顺序未被偷偷修改；`test_unknown_step_or_nan_is_rejected`拒绝未注册kind、NaN/Infinity；`test_digest_tracks_semantics`断言参数/素材/引擎变动改digest，改显示名称不改。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_compiler.py' -q`观察RED。
-- [ ] 实现有限内置登记表、参数schema、作用域main/full、前置依赖和唯一输出节点；crop/flip/color排序可以表达，时间段→变速→作用域图层→拼接→整片层→输出的边界不随意交换。
-- [ ] 编译生成确定计划、期望时长/尺寸/音频与受控中间文件需求；不在编译器内启动进程，不接受raw FFmpeg/shell。空间估算必须包含辅助素材与预览。
-- [ ] GREEN：同命令PASS；M03基础回归不变；拒绝会导致重复输出、跨作用域拖动或裁切尺寸无效的组合。
-- [ ] 提交`feat: compile validated media pipelines`，限定Files；下游新增模块只扩展登记表明确类型。
+- [x] RED：`test_all_disabled_matches_baseline`断言输出配置/几何/时间与基础计划一致；`test_invalid_order_is_rejected_not_sorted`断言翻转位于文字之后被拒绝且原顺序未被偷偷修改；`test_unknown_step_or_nan_is_rejected`拒绝未注册kind、NaN/Infinity；`test_digest_tracks_semantics`断言参数/素材/引擎变动改digest，改显示名称不改。运行`& 'D:\auto-deploy\.venv\Scripts\python.exe' -m pytest 'D:\auto-deploy\tests\media\test_compiler.py' -q`观察RED。
+- [x] 实现有限内置登记表、参数schema、作用域main/full、前置依赖和唯一输出节点；crop/flip/color排序可以表达，时间段→变速→作用域图层→拼接→整片层→输出的边界不随意交换。
+- [x] 编译生成确定计划、期望时长/尺寸/音频与受控中间文件需求；不在编译器内启动进程，不接受raw FFmpeg/shell。空间估算必须包含辅助素材与预览。
+- [x] GREEN：同命令PASS；M03基础回归不变；拒绝会导致重复输出、跨作用域拖动或裁切尺寸无效的组合。
+- [x] 提交`feat: compile validated media pipelines`，限定Files；下游新增模块只扩展登记表明确类型。
 
 ### Task 5: M05 — 裁切、翻转、调色、画布布局
 
