@@ -134,7 +134,10 @@ def test_enabled_unimplemented_module_never_silently_skips(tmp_path):
     from fabu.media.models import InputBundle, PlanInvalid
 
     with pytest.raises(PlanInvalid, match="not yet available"):
-        compile_plan(InputBundle(source=info_fixture(tmp_path), assets={}), preset([step("flip")]))
+        compile_plan(
+            InputBundle(source=info_fixture(tmp_path), assets={}),
+            preset([step("trim", {"start_ms": 0, "end_ms": 1000})]),
+        )
 
 
 def test_preset_save_rejects_unknown_raw_or_invalid_output(tmp_path):

@@ -55,6 +55,10 @@ def render(
     assert_no_reparse(plan.source.path)
     if sha256_file(plan.source.path) != plan.source_hash:
         raise RenderFailed("The source changed after probing; recompile before rendering")
+    for asset in plan.asset_inputs:
+        assert_no_reparse(asset.local_path)
+        if sha256_file(asset.local_path) != plan.asset_hashes.get(asset.id):
+            raise RenderFailed("Auxiliary asset changed after compilation")
     scan_frame_geometry(plan.source, lambda args: tools.probe(args, cancel))
     if cancel.is_set():
         raise RenderFailed("Rendering canceled during source verification")
@@ -93,6 +97,9 @@ def render(
             raise RenderFailed("Rendering failed or was canceled; candidate is not approved")
         if not candidate.is_file() or not candidate.stat().st_size:
             raise RenderFailed("Renderer did not produce a nonempty candidate")
+        for asset in plan.asset_inputs:
+            if sha256_file(asset.local_path) != plan.asset_hashes.get(asset.id):
+                raise RenderFailed("Auxiliary asset changed during rendering")
         if sha256_file(plan.source.path) != plan.source_hash:
             raise RenderFailed("The source changed during rendering; candidate is not approved")
         record.write_text(

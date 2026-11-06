@@ -13,7 +13,7 @@ from fabu.assets import AssetRef
 from fabu.media.geometry import Size
 from fabu.media.probe import MediaInfo
 
-ENGINE_VERSION = "baseline-1"
+ENGINE_VERSION = "pipeline-2"
 
 
 class PlanInvalid(ValueError):
@@ -59,6 +59,9 @@ class MediaPlan(BaseModel):
     audio_profile: AudioProfile
     output_profile: OutputProfile
     asset_hashes: dict[str, str] = Field(default_factory=dict)
+    asset_inputs: list[AssetRef] = Field(default_factory=list)
+    video_graph: str | None = None
+    geometry_summary: dict = Field(default_factory=dict)
 
 
 class RenderCommand(BaseModel):

@@ -60,6 +60,14 @@ class LayoutParams(Params):
     bottom_image_id: str | None = None
     background: str = Field(default="#000000", pattern=r"^#[0-9a-fA-F]{6}$")
 
+    @model_validator(mode="after")
+    def image_bands(self):
+        if (self.top_image_id and self.top_fraction <= 0) or (
+            self.bottom_image_id and self.bottom_fraction <= 0
+        ):
+            raise ValueError("Decoration images require a nonempty reserved band")
+        return self
+
 
 class LayerParams(Params):
     x: float = Field(default=0, ge=0, le=1)
