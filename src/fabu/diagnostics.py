@@ -1,0 +1,105 @@
+"""A deliberately finite, read-only CLI diagnostic adapter. Never config get/upload/publish."""
+
+import json
+import os
+import threading
+from pathlib import Path
+
+from fabu.tools import CommandSpec, run_command
+
+_PLATFORMS = {"抖音": "douyin", "头条号": "toutiao", "哔哩哔哩": "bilibili", "B站": "bilibili"}
+_OPERATIONS = {
+    "version": ["--version"],
+    "accounts": ["accounts", "list", "--json"],
+    "schema:douyin": ["schema", "fields", "抖音", "video", "--json"],
+    "schema:toutiao": ["schema", "fields", "头条号", "video", "--json"],
+    "schema:bilibili": ["schema", "fields", "哔哩哔哩", "video", "--json"],
+}
+
+
+def normalize_readonly(operation: str, raw: dict) -> dict:
+    if raw.get("ok") is not True:
+        raise RuntimeError("CLI read-only query failed; check local configuration")
+    data = raw.get("data", {})
+    if operation == "version":
+        return {"version": str(raw.get("version") or data.get("version", "unknown"))[:50]}
+    if operation == "accounts":
+        if isinstance(data, dict):
+            rows = data.get("accounts", data.get("list", data.get("items")))
+        else:
+            rows = data
+        if not isinstance(rows, list):
+            raise ValueError("Unrecognized account-list response; do not guess account IDs")
+        accounts = []
+        for row in rows:
+            platform = row.get("platform", row.get("platformName", ""))
+            identifier = row.get("id", row.get("accountId"))
+            if identifier is None or not isinstance(platform, str):
+                raise ValueError("Account response lacks a stable ID or platform")
+            accounts.append(
+                {
+                    "id": str(identifier),
+                    "platform": _PLATFORMS.get(platform, platform),
+                    "nickname": str(
+                        row.get("platformAccountName", row.get("name", row.get("nickname", "")))
+                    ),
+                    "active": row.get("status") == 1,
+                }
+            )
+        return {"accounts": accounts}
+    if operation.startswith("schema:"):
+        # Only field names are useful here, not defaults, private account values or raw objects.
+        fields = []
+
+        def visit(value):
+            if isinstance(value, dict):
+                for key in ("name", "field", "path", "key"):
+                    if isinstance(value.get(key), str):
+                        fields.append(value[key][:160])
+                for child in value.values():
+                    visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(data)
+        return {"fields": sorted(set(fields))}
+    raise ValueError("Operation is not an allowed read-only query")
+
+
+class ReadOnlyCli:
+    def __init__(self, executable: Path | None, config: Path | None, project_dir: Path):
+        self.executable = executable
+        self.config = config
+        self.project_dir = project_dir
+
+    def query(self, operation: str) -> dict:
+        if operation == "entitlements":
+            # No verified free-entitlement endpoint has been established. Do not invent one.
+            return {"unavailable": True}
+        if operation not in _OPERATIONS:
+            raise ValueError("Operation is not an allowed read-only query")
+        if self.executable is None:
+            raise ValueError("CLI executable not configured")
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("YIXIAOER_", "YXER_"))
+        }
+        env["YIXIAOER_PROJECT_DIR"] = str(self.project_dir)
+        env["YIXIAOER_API_URL"] = "https://www.yixiaoer.cn/api"
+        if operation != "version":
+            if self.config is None or not self.config.is_file():
+                raise ValueError("A known local CLI config is required for account/schema queries")
+            env["YIXIAOER_CONFIG"] = str(self.config)
+        spec = CommandSpec(
+            executable=self.executable,
+            args=_OPERATIONS[operation],
+            cwd=self.project_dir,
+            env=env,
+            timeout_s=30,
+        )
+        result = run_command(spec, threading.Event())
+        if result.exit_code != 0 or result.timed_out or result.output_limit_exceeded:
+            raise RuntimeError("CLI read-only query did not complete successfully")
+        return normalize_readonly(operation, json.loads(result.stdout.decode("utf-8-sig")))
