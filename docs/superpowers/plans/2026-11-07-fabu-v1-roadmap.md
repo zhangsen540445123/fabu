@@ -94,7 +94,7 @@
 
 - **F02** `CommandSpec(executable: Path, args: list[str], cwd: Path, env: dict[str,str], timeout_s: int)`；`CommandResult(exit_code: int, stdout: bytes, stderr: bytes, timed_out: bool)`。输出捕获不等于允许记录原始内容。
 - **F03** `CapabilityReport(account_status, upload, immediate, native_schedule, quota, file_limits, checked_at, tool_version, evidence_refs)`：每项为UNKNOWN/SUPPORTED/UNSUPPORTED；仿真不能把远端能力设成SUPPORTED。
-- **F04** `JobSpec(source_url, title, preset_version_id, target_ids, publish_mode, scheduled_at_utc)`、`JobSnapshot(id, revision, spec, source_manifest: dict | None, plan_digest, output_manifest: dict | None, state, pause_reason)`（存储层JSON；阶段边界用M02/M03模型严格解码）、`TargetAttempt(id, job_id, revision, target_id, payload_digest, provider_task_id, state)`。
+- **F04** `JobSpec(source_url, title, preset_version_id, target_ids, publish_mode, scheduled_at_utc)`、`JobSnapshot(id, revision, content_revision, spec, source_manifest: dict | None, plan_digest, output_manifest: dict | None, state, pause_reason)`（存储层JSON；阶段边界用M02/M03模型严格解码）、`TargetAttempt(id, job_id, revision, target_id, payload_digest, provider_task_id, state)`。
 - **F05** `AssetRef(id, sha256, local_path, media_type, size_bytes)`；`StepSpec(id, kind, enabled, scope, params, asset_ids)`定义结构化信封，具体kind/params校验由M04登记；`PresetVersion(id, preset_id, revision, schema_version, steps: list[StepSpec], output: dict)`持久化输出配置，M03/M04用OutputProfile严格校验后才能编译。
 - **M01** `MediaInfo(path, sha256, duration_ms, video_stream_index, coded_width, coded_height, sar, rotation_deg, color, audio)`，`audio`可为None，否则记录流索引、采样率、声道、时长；`Size(width, height)`。
 - **M02** `SourceManifest(video_id, source: AssetRef, thumbnail: AssetRef, selected_format, fetched_at)`。源封面与成片预览图永不混用。
@@ -105,6 +105,8 @@
 - **P01** `PublishSnapshot(job_id, revision, output: OutputManifest, cover: AssetRef, title, description, topic_tags, source_declarations, target_ids, mode, scheduled_at_utc, digest)`；一旦提交不可改。
 - **P02** `PreparedSubmission(snapshot_digest, target_ids, channel, client_binding, payload_path, resource_refs)`；`SubmissionReceipt(provider_task_id, accepted_targets, raw_evidence_ref)`；`ReconcileResult(target_id, state, scheduled_at_utc, platform_post_id, evidence_refs)`。
 - **P02** `ExecutionPermit(kind: SIMULATION/CONTROLLED_TEST/PRODUCTION, allowed_targets, snapshot_digest, mode, scheduled_at_utc, max_attempts, expires_at)`。这是工程授权边界模型，不从外部网页/CLI提示自动生成。
+
+实施裁定F04：JobSnapshot.revision是乐观锁状态版本；content_revision是媒体/发布内容版本。状态变化不能使已验证成片失效。TargetAttempt.revision及M09/P01/P03的媒体/payload身份使用content_revision，不能使用状态revision。
 
 接口扩展必须在所有者任务与下游测试同步更改。不要提前实现通用插件平台；模块登记表只登记第10节明确的内置步骤。
 
