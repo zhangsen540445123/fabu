@@ -107,14 +107,25 @@ def create_app(
         startup_cleanup=startup_cleanup,
     )
     app.state.publication_authority = PermitAuthority()
+    from fabu.publishing.live_execution import make_publisher
+    from fabu.publishing.local_policy import LocalPublishPolicy
+
+    app.state.live_policy = LocalPublishPolicy(app)
     app.state.publication_queue = PublicationQueue(
         store,
         app.state.publication_authority,
         lambda worker: coordinator(app, worker),
         app.state.media_controller.wake,
         readonly_factory=lambda cancel: LiveReconciler(app, cancel),
+        local_policy=app.state.live_policy,
+        live_factory=lambda snapshot, permit, cancel: make_publisher(app, snapshot, permit, cancel),
     )
     app.state.media_controller.publication_queue = app.state.publication_queue
+    from fabu.publishing.provider_tracking import ProviderTracker
+
+    app.state.provider_tracker = ProviderTracker(app)
+    app.state.publication_queue.tracker = app.state.provider_tracker
+    app.state.media_controller.provider_tracker = app.state.provider_tracker
     app.state.publication_profiles = PublicationProfiles(app)
     app.state.media_controller.publication_profiles = app.state.publication_profiles
     app.state.capabilities = CapabilityReport(checked_at=datetime.now(UTC))
@@ -162,7 +173,7 @@ def create_app(
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "publishing_enabled": False}
+        return {"status": "ok", "publishing_enabled": app.state.live_policy.enabled()}
 
     @app.post("/api/session")
     def bootstrap(request: Request):
@@ -192,11 +203,13 @@ def create_app(
 
     @app.get("/api/settings")
     def get_settings():
+        from fabu.publishing.defaults import get_default_preset
+
         return {
             **app.state.settings.model_dump(mode="json"),
             "credentials": {"configured": app.state.credentials.configured()},
             "environment": check_environment(app.state.settings).model_dump(mode="json"),
-            "default_preset_version_id": app.state.default_preset.id,
+            "default_preset_version_id": get_default_preset(app).id,
         }
 
     @app.put("/api/settings")

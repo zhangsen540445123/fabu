@@ -123,7 +123,7 @@ class JobStore:
             (job_id, json.dumps(redact_event(event), ensure_ascii=False), _now()),
         )
 
-    def create(self, spec: JobSpec) -> JobSnapshot:
+    def create(self, spec: JobSpec, *, on_create=None) -> JobSnapshot:
         spec = JobSpec.model_validate(spec.model_dump())
         identifier, now = str(uuid4()), _now()
         with self.transaction() as db:
@@ -137,6 +137,14 @@ class JobStore:
                 (identifier, spec.model_dump_json(), now),
             )
             self._event(db, identifier, {"event": "created", "status": "NEW"})
+            if on_create is not None:
+                # Persist trusted job intent before a worker can claim the new row.
+                on_create(
+                    db,
+                    self._snapshot(
+                        db.execute("SELECT * FROM jobs WHERE id=?", (identifier,)).fetchone()
+                    ),
+                )
         return self.get(identifier)
 
     def get(self, job_id: str) -> JobSnapshot:

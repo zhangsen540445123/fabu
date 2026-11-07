@@ -119,3 +119,22 @@ def form_for_job(app, job_id, scope=None):
             job.spec.title, config.topic_override if config else None
         ).model_dump(mode="json"),
     }
+
+
+def get_default_preset(app):
+    with app.state.store.connection() as db:
+        row = db.execute(
+            "SELECT preset_version_id FROM workflow_preset_default WHERE singleton=1"
+        ).fetchone()
+    return app.state.presets.get_version(row[0]) if row else app.state.default_preset
+
+
+def set_default_preset(app, identifier):
+    preset = app.state.presets.get_version(identifier)
+    with app.state.store.transaction() as db:
+        db.execute(
+            "INSERT INTO workflow_preset_default VALUES (1,?) "
+            "ON CONFLICT(singleton) DO UPDATE SET preset_version_id=excluded.preset_version_id",
+            (preset.id,),
+        )
+    return {"preset_version_id": preset.id}

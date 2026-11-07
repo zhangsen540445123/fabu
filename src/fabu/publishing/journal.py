@@ -93,6 +93,26 @@ class SqliteUploadJournal:
                 ),
             )
 
+    def not_started(self, snapshot_digest: str, kind: str) -> None:
+        """Release ONLY the current pre-process record, preserving a local audit event.
+
+        Caller must have proof its runner was never invoked. Crashes, cancellation
+        inside the runner and remote errors are not eligible and remain UNKNOWN.
+        """
+        sha = self._identity(snapshot_digest, kind)
+        with self.store.transaction() as db:
+            deleted = db.execute(
+                "DELETE FROM upload_attempts WHERE scope=? AND resource=? AND sha256=? "
+                "AND snapshot_digest=? AND state='SUBMITTING' AND receipt_cipher IS NULL",
+                (self.scope, kind, sha, snapshot_digest),
+            )
+            if deleted.rowcount:
+                self.store._event(
+                    db,
+                    self.snapshot.job_id,
+                    {"event": "upload_not_started", "status": "NOT_STARTED", "resource": kind},
+                )
+
     def complete(self, snapshot_digest: str, receipt: UploadReceipt) -> None:
         sha = self._identity(snapshot_digest, receipt.resource)
         if receipt.sha256 != sha or receipt.metadata != resource_metadata(

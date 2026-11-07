@@ -27,6 +27,7 @@ class MediaController:
         self.startup_cleanup = startup_cleanup
         self.publication_queue = None
         self.publication_profiles = None
+        self.provider_tracker = None
         self.store, self.service_factory, self.preview_root = store, service_factory, preview_root
         self._lock = threading.Lock()
         self._wake = threading.Event()
@@ -257,6 +258,13 @@ class MediaController:
                         worker, self._cancel
                     ):
                         continue
+                    if self.provider_tracker is not None:
+                        try:
+                            if self.provider_tracker.process_due(self._cancel):
+                                continue
+                        except (ValueError, OSError):
+                            # Read-only tracking failure must not terminate the media worker.
+                            self._set(error_code="provider_tracking_failed")
                     try:
                         service = self.service_factory(self._cancel)
                     except (ValueError, OSError):

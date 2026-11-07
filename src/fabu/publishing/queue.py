@@ -9,18 +9,32 @@ from fabu.publishing.service import busy, public_run, require_simulation
 
 
 class PublicationQueue:
-    def __init__(self, store, authority, coordinator_factory, wake, readonly_factory=None):
+    def __init__(
+        self,
+        store,
+        authority,
+        coordinator_factory,
+        wake,
+        readonly_factory=None,
+        local_policy=None,
+        live_factory=None,
+    ):
         self.store, self.authority = store, authority
         self.coordinator_factory, self.wake = coordinator_factory, wake
         self.publisher_factory = lambda authority, cancel: FakePublisher(authority, cancel=cancel)
         self._publishers = {}
         self.readonly_factory = readonly_factory
+        self.local_policy, self.live_factory = local_policy, live_factory
+        self.tracker = None
 
     def _validate_action(self, action, scope):
         if action not in {"submit", "reconcile"} or scope not in {"live", "simulation"}:
             raise ValueError("Unknown publication action or scope")
         if action == "submit":
-            require_simulation(scope)
+            if scope == "live" and self.local_policy and self.live_factory:
+                self.local_policy.check_identity()
+            else:
+                require_simulation(scope)
         elif scope == "live" and self.readonly_factory is None:
             raise ValueError("Read-only reconciliation is not configured")
 
@@ -30,7 +44,7 @@ class PublicationQueue:
     def enqueue(self, run, action):
         self._validate_action(action, run["scope"])
         # Capabilities/immutability are checked again by the coordinator at execution time.
-        public = public_run(self.store, run)
+        public = public_run(self.store, run, self.local_policy)
         if not public["can_submit" if action == "submit" else "can_reconcile"]:
             raise ValueError("This operation is not available for the current evidence")
         identifier, now = str(uuid4()), datetime.now(UTC).isoformat()
@@ -106,7 +120,11 @@ class PublicationQueue:
                 raise ValueError("Canceled before publication")
             coordinator = self.coordinator_factory(worker)
             snapshot = coordinator._snapshot(run)
-            if command["scope"] == "live":
+            permit = None
+            if command["scope"] == "live" and command["action"] == "submit":
+                permit = self.local_policy.issue(snapshot)
+                publisher = self.live_factory(snapshot, permit, cancel)
+            elif command["scope"] == "live":
                 publisher = self.readonly_factory(cancel)
             else:
                 publisher = self._publishers.get(run["id"])
@@ -115,9 +133,17 @@ class PublicationQueue:
                     self._publishers[run["id"]] = publisher
                 publisher.cancel = cancel
             if command["action"] == "reconcile":
-                coordinator.reconcile(snapshot.digest, command["scope"], publisher)
+                if (
+                    command["scope"] == "live"
+                    and self.tracker is not None
+                    and self.local_policy is not None
+                    and self.local_policy.enabled()
+                ):
+                    self.tracker.refresh_run(run["id"], cancel)
+                else:
+                    coordinator.reconcile(snapshot.digest, command["scope"], publisher)
             else:
-                permit = self.authority.issue(
+                permit = permit or self.authority.issue(
                     snapshot,
                     kind="simulation",
                     expires_at=self.authority.clock() + timedelta(hours=1),
@@ -126,8 +152,11 @@ class PublicationQueue:
                     authorization_note="Local authenticated simulation; no network",
                 )
                 coordinator.run_submission(snapshot.job_id, permit, publisher)
-        except Exception:
-            state, error = "FAILED", "publication_command_failed"
+        except Exception as exc:
+            from fabu.publishing.local_policy import LocalPolicyError
+
+            state = "FAILED"
+            error = str(exc) if isinstance(exc, LocalPolicyError) else "publication_command_failed"
         finally:
             with self.store.transaction() as db:
                 db.execute(

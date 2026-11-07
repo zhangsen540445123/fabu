@@ -20,6 +20,6 @@ if ($Port) { $env:FABU_PORT = [string]$Port }
 $env:PYTHONUTF8 = '1'
 # Isolated imports use this venv, not the caller's directory or stale PYTHONPATH.
 # Python launches an owned CREATE_NO_WINDOW runtime. No visible helper window or shell command.
-if ($NoBrowser) { & $python -I -X utf8 -m fabu.launcher start --no-browser }
-else { & $python -I -X utf8 -m fabu.launcher start }
+if ($NoBrowser) { & $python -I -X utf8 -m fabu.launcher start --project-root $root --no-browser }
+else { & $python -I -X utf8 -m fabu.launcher start --project-root $root }
 exit $LASTEXITCODE

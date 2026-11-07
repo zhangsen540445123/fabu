@@ -170,8 +170,10 @@ describe("local dashboard", () => {
     // jsdom does not toggle details on summary clicks; set the browser-owned open state.
     summary.closest("details")!.open = true;
     expect(screen.getByRole("button", { name: "生成样片" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "立即发布" })).toBeDisabled();
-    expect(screen.getByText("仅本地仿真 · 真实发布未解锁")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "开始真实发布" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("仅本地仿真 · 不会真实上传或投稿")).toBeVisible();
     expect(api.createPreview).not.toHaveBeenCalled();
     expect(api.approvePreview).not.toHaveBeenCalled();
     expect(api.resumeJob).not.toHaveBeenCalled();
@@ -222,15 +224,22 @@ describe("local dashboard", () => {
   it("shows unverified capabilities, not publishing success", async () => {
     const { default: App } = await import("../App");
     render(<App />);
-    expect(await screen.findByText("发布未解锁")).toBeVisible();
-    expect(screen.getByRole("button", { name: "立即发布" })).toBeDisabled();
-    expect(screen.getAllByText("未验证").length).toBeGreaterThan(0);
+    expect(
+      await screen.findByRole("heading", { name: "每条视频，都有迹可循。" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "开始真实发布" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "真实发布已阻断" }),
+    ).toBeVisible();
+    expect(screen.getAllByText("未验收").length).toBeGreaterThan(0);
   });
   it("creates a local job and reloads persisted rows", async () => {
     const { default: App } = await import("../App");
     api.createJob.mockResolvedValue(job);
     render(<App />);
-    await screen.findByText("发布未解锁");
+    await screen.findByRole("heading", { name: "每条视频，都有迹可循。" });
     fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
     fireEvent.change(screen.getByLabelText("YouTube链接"), {
       target: { value: job.spec.source_url },
@@ -275,7 +284,7 @@ describe("local dashboard", () => {
   it("does not show a misleading active processor", async () => {
     const { default: App } = await import("../App");
     render(<App />);
-    await screen.findByText("发布未解锁");
+    await screen.findByRole("heading", { name: "每条视频，都有迹可循。" });
     expect(screen.getByText(/处理引擎未启动/)).toBeVisible();
     expect(screen.getByText(/下载、完整性校验到预设处理/)).toBeVisible();
     expect(screen.queryByText(/从下载、样片确认/)).not.toBeInTheDocument();
@@ -283,7 +292,7 @@ describe("local dashboard", () => {
   it("shows actual paths in settings", async () => {
     const { default: App } = await import("../App");
     render(<App />);
-    await screen.findByText("发布未解锁");
+    await screen.findByRole("heading", { name: "每条视频，都有迹可循。" });
     fireEvent.click(screen.getByRole("button", { name: "运行设置" }));
     expect(screen.getByLabelText("媒体保存目录")).toHaveValue(
       settings.data_dir,

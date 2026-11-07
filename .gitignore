@@ -25,3 +25,6 @@
 # Generated local credentials must never be committed.
 *.dpapi
 cookies-*.txt
+
+# Machine-local physical storage selection (may point into an MSIX virtual store).
+/scripts/start-fabu.profile.json

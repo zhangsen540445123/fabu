@@ -7,6 +7,7 @@ import {
   type PublicationProfile,
   type PresetSummary,
 } from "../api";
+import { usePublishingReadiness } from "../publishing-readiness";
 import { beijingToUtc } from "../publishing-time";
 export default function NewJobPage({
   presets,
@@ -19,6 +20,7 @@ export default function NewJobPage({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const { readiness } = usePublishingReadiness();
   const [url, setUrl] = useState(""),
     [title, setTitle] = useState(""),
     [version, setVersion] = useState(
@@ -40,9 +42,7 @@ export default function NewJobPage({
         if (!alive) return;
         const selected = defaults.profile;
         setProfiles(
-          selected && !v.some((p) => p.id === selected.id)
-            ? [selected, ...v]
-            : v,
+          selected ? [selected, ...v.filter((p) => p.id !== selected.id)] : v,
         );
         if (selected) setProfile(selected.id);
         setLoading(false);
@@ -54,11 +54,26 @@ export default function NewJobPage({
       alive = false;
     };
   }, []);
-  const liveProfile = profiles.find((p) => p.id === profile)?.scope === "live";
+  const publicationProfile = profiles.find((p) => p.id === profile);
+  const liveProfile = publicationProfile?.scope === "live";
+  const automaticLive = liveProfile && publicationProfile?.execution === "live";
+  const liveReady =
+    readiness.enabled &&
+    readiness.status === "ready" &&
+    !readiness.blockers.length;
+  const scheduleBlocked =
+    liveProfile &&
+    mode === "native_schedule" &&
+    !readiness.native_schedule_enabled;
+  const blocked =
+    !!profile &&
+    (!publicationProfile?.can_run ||
+      (automaticLive && !liveReady) ||
+      scheduleBlocked);
   const selected = presets.find((p) => p.version.id === version);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (loading) return;
+    if (loading || busy || blocked || !version) return;
     setBusy(true);
     setError("");
     try {
@@ -98,7 +113,7 @@ export default function NewJobPage({
         aria-labelledby="new-title"
       >
         <div className="panel-title">
-          <h2 id="new-title">新建本地任务</h2>
+          <h2 id="new-title">新建自动工作流</h2>
           <button className="quiet" aria-label="关闭新建任务" onClick={onClose}>
             ×
           </button>
@@ -154,7 +169,12 @@ export default function NewJobPage({
               <option value="">不使用发布模板 · 仅本地处理</option>
               {profiles.map((p) => (
                 <option key={p.id} value={p.id} disabled={!p.can_run}>
-                  {p.name} · {p.scope === "simulation" ? "仿真" : "真实预检"}
+                  {p.name} ·{" "}
+                  {p.scope === "simulation"
+                    ? "仿真"
+                    : p.execution === "live"
+                      ? "真实自动发布"
+                      : "真实预检（尚未授权）"}
                 </option>
               ))}
             </select>
@@ -168,10 +188,16 @@ export default function NewJobPage({
                   onChange={(e) => setMode(e.target.value as typeof mode)}
                 >
                   <option value="immediate">
-                    自动立即发布{liveProfile ? "（真实预检）" : "（仿真）"}
+                    {liveProfile
+                      ? automaticLive
+                        ? "自动立即真实发布"
+                        : "立即发布预检（不投稿）"
+                      : "自动立即发布（仿真）"}
                   </option>
                   <option value="native_schedule">
-                    自动平台定时{liveProfile ? "（真实预检）" : "（仿真）"}
+                    {liveProfile
+                      ? "平台原生定时（尚未验收）"
+                      : "自动平台定时（仿真）"}
                   </option>
                 </select>
               </label>
@@ -188,7 +214,9 @@ export default function NewJobPage({
               )}
               <p className="preset-note">
                 {liveProfile
-                  ? "成片验证完成后自动进入真实账号发布预检，带入默认账号与来源声明。目前仅预检，不上传、不投稿；真实发布仍须通过免费额度、平台能力与媒体批准检查。"
+                  ? automaticLive
+                    ? "点击创建并自动真实发布后，将使用已保存的账号、话题和来源声明，自动下载校验、处理校验、上传、逐平台提交并跟踪。仅选择真实模式不代表已经发送；只影响此新任务，不恢复或重发历史任务。三平台分别提交，最多消耗3次本地预算；不是官方剩余额度。平台成片质量未验收，B站2秒故障风险仍需核对，provider成功不代表平台完整成片通过。"
+                    : "此流程尚未授权真实发布：目前仅预检，不上传、不投稿，不能视为自动真实发布。成片验证完成后带入账号与来源声明进行预检。"
                   : "成片验证完成后自动进入发布仿真流程；发布仿真仍需通过样片确认等发布专用预检。使用此模板的账号与来源声明，无需再点击发布。仿真不上传、不扣次；真实发布权限与安全限制不变。"}
               </p>
             </>
@@ -200,7 +228,30 @@ export default function NewJobPage({
               </select>
             </label>
           )}
-          <p className="muted">使用原始YouTube封面；不自动上传或投稿。</p>
+          {automaticLive && !liveReady && (
+            <div className="error" role="alert">
+              真实发布已阻断。
+              {readiness.blockers.length
+                ? readiness.blockers.join("；")
+                : "本机尚未明确授权或当前配置未就绪。"}
+            </div>
+          )}
+          {profile && !publicationProfile?.can_run && (
+            <p role="alert">
+              所选发布流程当前不可运行；请核对账号和来源声明，不会自动替换为本地任务。
+            </p>
+          )}
+          {scheduleBlocked && (
+            <p role="alert">
+              平台原生定时尚未验收，不能执行自动真实定时；不会回退为立即发布。
+            </p>
+          )}
+          <p className="muted">
+            使用原始YouTube封面；
+            {automaticLive
+              ? "创建后按上述真实流程执行。"
+              : "当前流程不会自动上传或真实投稿。"}
+          </p>
           {error && (
             <p className="error" role="alert">
               {error}
@@ -208,13 +259,15 @@ export default function NewJobPage({
           )}
           <button
             className="primary wide"
-            disabled={loading || busy || !version}
+            disabled={loading || busy || !version || blocked}
           >
             {busy
               ? "保存中…"
               : profile
                 ? liveProfile
-                  ? "创建自动流程（真实预检）"
+                  ? automaticLive
+                    ? "创建并自动真实发布"
+                    : "创建自动流程（真实预检）"
                   : "创建自动流程（仿真）"
                 : "保存本地任务"}
           </button>

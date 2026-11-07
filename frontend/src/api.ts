@@ -311,7 +311,18 @@ export interface PublicationDraft {
     };
   }[];
 }
+export interface ProviderObservation {
+  status: "pending" | "running" | "success" | "failed" | "unknown";
+  checked_at: string | null;
+  next_check_at: string | null;
+  platform_content_id: string | null;
+  reason: string | null;
+  quality_status: string;
+  expected_duration_s: number | null;
+  observed_duration_s: number | null;
+}
 export interface PublishTarget {
+  provider_observation?: ProviderObservation | null;
   account_id: string;
   platform: string;
   nickname: string;
@@ -359,10 +370,14 @@ export const getTargetStatus = (
   jobId: string,
   scope: "simulation" | "live" = "simulation",
 ) => request<PublishRun>(`/api/jobs/${jobId}/targets?scope=${scope}`);
-export const submitPublication = (jobId: string, digest: string) =>
+export const submitPublication = (
+  jobId: string,
+  digest: string,
+  scope: "simulation" | "live" = "simulation",
+) =>
   request(`/api/jobs/${jobId}/submit`, {
     method: "POST",
-    body: JSON.stringify({ snapshot_digest: digest, scope: "simulation" }),
+    body: JSON.stringify({ snapshot_digest: digest, scope }),
   });
 export const reconcilePublication = (
   jobId: string,
@@ -373,6 +388,61 @@ export const reconcilePublication = (
     method: "POST",
     body: JSON.stringify({ snapshot_digest: digest, scope }),
   });
+export interface PublishingReadiness {
+  enabled: boolean;
+  status: "ready" | "blocked";
+  blockers: string[];
+  submission_strategy: "per_target";
+  daily_submission_limit: 3;
+  quota_source: "local_conservative_budget";
+  remaining_local_submissions: number;
+  platform_quality_verified: false;
+  native_schedule_enabled: boolean;
+}
+export const unavailableReadiness: PublishingReadiness = {
+  enabled: false,
+  status: "blocked",
+  blockers: [
+    "发布就绪状态读取失败（readiness_unavailable），真实发布已阻断；配置与任务仍可读取。",
+  ],
+  submission_strategy: "per_target",
+  daily_submission_limit: 3,
+  quota_source: "local_conservative_budget",
+  remaining_local_submissions: 0,
+  platform_quality_verified: false,
+  native_schedule_enabled: false,
+};
+export function normalizePublishingReadiness(
+  value: unknown,
+): PublishingReadiness {
+  if (!value || typeof value !== "object") return unavailableReadiness;
+  const r = value as PublishingReadiness;
+  if (
+    typeof r.enabled !== "boolean" ||
+    !["ready", "blocked"].includes(r.status) ||
+    !Array.isArray(r.blockers) ||
+    !r.blockers.every((b) => typeof b === "string") ||
+    r.submission_strategy !== "per_target" ||
+    r.daily_submission_limit !== 3 ||
+    r.quota_source !== "local_conservative_budget" ||
+    !Number.isInteger(r.remaining_local_submissions) ||
+    r.remaining_local_submissions < 0 ||
+    r.remaining_local_submissions > 3 ||
+    r.platform_quality_verified !== false ||
+    typeof r.native_schedule_enabled !== "boolean"
+  )
+    return unavailableReadiness;
+  return r;
+}
+export async function getPublishingReadiness(): Promise<PublishingReadiness> {
+  try {
+    return normalizePublishingReadiness(
+      await request<unknown>("/api/publishing/readiness"),
+    );
+  } catch {
+    return unavailableReadiness;
+  }
+}
 export interface PublishingConnection {
   configured: boolean;
   package_root: string | null;
@@ -433,7 +503,7 @@ export interface PublicationProfile {
   name: string;
   scope: "simulation" | "live";
   can_run: boolean;
-  execution: "simulation" | "preflight_only";
+  execution: "simulation" | "preflight_only" | "live";
   accounts: PublishAccount[];
   topic_override: string | null;
 }

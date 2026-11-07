@@ -9,7 +9,11 @@ from fabu.assets import AssetStore
 from fabu.domain import JobSnapshot
 from fabu.media.approvals import PreviewApprovalStore
 from fabu.media.models import OutputManifest
-from fabu.media.service import load_job_plan, require_approved_job_output
+from fabu.media.service import (
+    load_job_plan,
+    require_approved_job_output,
+    require_verified_job_output,
+)
 from fabu.media.source import SourceManifest, parse_youtube_url
 from fabu.presets import PresetStore
 from fabu.publishing.models import (
@@ -170,6 +174,7 @@ def build_publish_snapshot(
     presets: PresetStore,
     approvals: PreviewApprovalStore,
     now: datetime | None = None,
+    require_preview: bool = True,
 ) -> PublishSnapshot:
     config = PublicationConfig.model_validate(
         account_config.model_dump()
@@ -188,7 +193,8 @@ def build_publish_snapshot(
         )
     if set(job.spec.target_ids) != {a.account.account_id for a in config.accounts}:
         raise ValueError("Publish targets do not match this task revision")
-    verified = require_approved_job_output(store, presets, approvals, job)
+    verify_output = require_approved_job_output if require_preview else require_verified_job_output
+    verified = verify_output(store, presets, approvals, job)
     if output != verified:
         raise ValueError("Output does not belong to this approved task revision")
     source = SourceManifest.model_validate(job.source_manifest)

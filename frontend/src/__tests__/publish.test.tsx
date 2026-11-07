@@ -645,7 +645,7 @@ it("reloads task declarations when a new content revision arrives", async () => 
   );
   expect(api.configurePublication).not.toHaveBeenCalled();
 });
-it("offers preflight-only retry for a recoverable live handoff", async () => {
+it("does not resume a live handoff or promise an upload-free retry without current authorization", async () => {
   defaultForm({ source: "profile" });
   api.getWorkflowHandoff.mockResolvedValue({
     state: "PAUSED",
@@ -659,11 +659,11 @@ it("offers preflight-only retry for a recoverable live handoff", async () => {
   };
   api.resumeWorkflowHandoff.mockResolvedValue(liveJob);
   render(<PublishForm job={liveJob} refresh={refresh} />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "重试发布预检（不上传）" }),
-  );
-  await waitFor(() =>
-    expect(api.resumeWorkflowHandoff).toHaveBeenCalledWith(liveJob),
-  );
+  const resume = await screen.findByRole("button", {
+    name: "恢复自动真实流程（可能上传/投稿）",
+  });
+  expect(resume).toBeDisabled();
+  fireEvent.click(resume);
+  expect(api.resumeWorkflowHandoff).not.toHaveBeenCalled();
   expect(api.submitPublication).not.toHaveBeenCalled();
 });

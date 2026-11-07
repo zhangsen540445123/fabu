@@ -7,10 +7,15 @@ test("local dashboard persists tasks, blocks external requests, and adapts to na
   const faults: string[] = [];
   page.on("pageerror", (error) => faults.push(error.message));
   await page.goto("/");
-  await expect(page.getByText("发布未解锁")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "立即发布", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("heading", { name: "每条视频，都有迹可循。" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "真实发布已阻断" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "开始真实发布", exact: true }),
+  ).not.toBeVisible();
   await expect(page).toHaveURL("http://127.0.0.1:8766/");
   await page.screenshot({
     path: "test-results/dashboard-empty.png",

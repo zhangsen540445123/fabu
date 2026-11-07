@@ -13,6 +13,8 @@ import {
   type PresetSummary,
   type Settings,
 } from "./api";
+import PublishingReadinessCard from "./components/PublishingReadinessCard";
+import { usePublishingReadiness } from "./publishing-readiness";
 import JobsPage from "./pages/JobsPage";
 import SettingsPage from "./pages/SettingsPage";
 import PipelinePage from "./pages/PipelinePage";
@@ -26,6 +28,7 @@ export default function App() {
     [status, setStatus] = useState<MediaStatus | null>(null),
     [error, setError] = useState(""),
     [lastSync, setLastSync] = useState("");
+  const { readiness, refreshReadiness } = usePublishingReadiness(!!settings);
   const refreshJobs = useCallback(async () => {
     try {
       const [rows, state] = await Promise.all([getJobs(), getMediaStatus()]);
@@ -39,11 +42,18 @@ export default function App() {
   }, []);
   const refresh = useCallback(async () => {
     await refreshJobs();
-    try {
-      setPresets(await getPresets());
-    } catch {
-      setError("预设列表刷新失败，请稍后重试。");
-    }
+    await Promise.all([
+      getPresets()
+        .then(setPresets)
+        .catch(() => {
+          setError("预设列表刷新失败，请稍后重试。");
+        }),
+      getSettings()
+        .then(setSettings)
+        .catch(() => {
+          setError("默认处理预设刷新失败，保留上次配置；请刷新后再新建任务。");
+        }),
+    ]);
   }, [refreshJobs]);
   useEffect(() => {
     let alive = true;
@@ -168,39 +178,11 @@ export default function App() {
               <p>请通过本机启动入口打开受保护的会话。</p>
             </div>
           )}
-          <section className="publish-card">
-            <div className="publish-intro">
-              <span className="eyebrow">PUBLISHING / 发布能力</span>
-              <h2>发布未解锁</h2>
-              <p>
-                先核对免费权益与平台实际接收结果。
-                <br />
-                此版本不会上传或发布视频。
-              </p>
-              <button className="secondary" disabled>
-                立即发布
-              </button>
-            </div>
-            <div className="capability-list">
-              {[
-                ["视频上传", capabilities?.upload],
-                ["立即发布", capabilities?.immediate],
-                ["平台原生定时", capabilities?.native_schedule],
-                ["免费扣次规则", capabilities?.quota],
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <span>{label}</span>
-                  <span className="badge neutral">
-                    {value === "SUPPORTED"
-                      ? "已核查"
-                      : value === "UNSUPPORTED"
-                        ? "不支持"
-                        : "未验证"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
+          <PublishingReadinessCard
+            readiness={readiness}
+            capabilities={capabilities}
+            refresh={refreshReadiness}
+          />
           <footer>
             本地优先 · 源文件保留 · 异常暂停
             <span>{lastSync ? `最后同步 ${lastSync}` : "等待连接"}</span>

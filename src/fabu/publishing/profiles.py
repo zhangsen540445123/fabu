@@ -29,9 +29,9 @@ class WorkflowRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_url: str = Field(min_length=1, max_length=4096)
     title: str = Field(min_length=1, max_length=1000)
-    preset_version_id: str = Field(min_length=1, max_length=100)
-    profile_id: str = Field(min_length=1, max_length=100)
-    mode: Literal["immediate", "native_schedule"]
+    preset_version_id: str | None = Field(default=None, min_length=1, max_length=100)
+    profile_id: str | None = Field(default=None, min_length=1, max_length=100)
+    mode: Literal["immediate", "native_schedule"] = "immediate"
     scheduled_at_utc: datetime | None = None
 
 
@@ -58,7 +58,9 @@ class PublicationProfiles:
             "accounts": [a.account.model_dump(mode="json") for a in config.accounts],
             "topic_override": config.topic_override,
             "can_run": True,
-            "execution": "simulation" if row["scope"] == "simulation" else "preflight_only",
+            "execution": "simulation"
+            if row["scope"] == "simulation"
+            else ("live" if self.app.state.live_policy.enabled() else "preflight_only"),
         }
 
     def list(self):
@@ -112,7 +114,31 @@ class PublicationProfiles:
         return config
 
     def create(self, command):
+        from fabu.publishing.defaults import get_default_preset, set_default_preset
+
+        profile_id = command.profile_id
+        if profile_id is None:
+            with self.store.connection() as db:
+                default = db.execute(
+                    "SELECT profile_id FROM publication_defaults WHERE singleton=1"
+                ).fetchone()
+            if not default:
+                raise ValueError("Save default publishing configuration first")
+            profile_id = default[0]
+        command = command.model_copy(
+            update={
+                "profile_id": profile_id,
+                "preset_version_id": command.preset_version_id or get_default_preset(self.app).id,
+            }
+        )
         row = self.get(command.profile_id)
+        policy = self.app.state.live_policy
+        authorize = row["scope"] == "live" and policy.enabled()
+        if authorize:
+            policy.check_identity()
+            policy.refresh_catalogue_if_stale()
+            if command.mode != "immediate":
+                raise ValueError("Native scheduling is not verified; no immediate fallback")
         config = self._current_config(row)
         spec = JobSpec(
             source_url=command.source_url,
@@ -126,7 +152,9 @@ class PublicationProfiles:
         parse_youtube_url(spec.source_url)
         self.app.state.presets.get_version(spec.preset_version_id)
         self.validate_spec(spec)
-        job = self.store.create(spec)
+        hook = (lambda db, job: policy.authorize_job(job, db=db)) if authorize else None
+        job = self.store.create(spec, on_create=hook)
+        set_default_preset(self.app, spec.preset_version_id)
         self.app.state.media_controller.wake()
         return job
 
@@ -265,10 +293,12 @@ class PublicationProfiles:
         try:
             if cancel.is_set():
                 raise ValueError("Workflow canceled")
+            policy = self.app.state.live_policy
+            automatic_live = scope == "live" and policy.is_authorized(job.id)
+            if automatic_live:
+                policy.refresh_catalogue_if_stale()
             config = self.validate_spec(job.spec)
-            if scope == "live":
-                # Enter the publishing stage without pretending to grant an execution permit.
-                # Preserve the READY output and existing preview policy; no upload or submit.
+            if scope == "live" and not automatic_live:
                 require_verified_job_output(
                     self.store, self.app.state.presets, self.app.state.approvals, job
                 )
@@ -282,9 +312,10 @@ class PublicationProfiles:
                     assets=self.app.state.assets,
                     presets=self.app.state.presets,
                     approvals=self.app.state.approvals,
+                    require_preview=not automatic_live,
                 )
                 coordinator = self.app.state.publication_queue.coordinator_factory(worker)
-                run = coordinator.register(snapshot, "simulation")
+                run = coordinator.register(snapshot, scope)
                 self.app.state.publication_queue.enqueue(run, "submit")
                 state, error = "QUEUED", None
         except (ValueError, KeyError, OSError):

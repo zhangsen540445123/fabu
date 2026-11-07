@@ -33,6 +33,12 @@ def desktop_env(tmp_path):
     env = dict(os.environ)
     local = tmp_path / "local space & !"
     local.mkdir()
+    # The desktop profile pins the existing physical store, including outside
+    # the packaged Codex file view. Keep that store wholly inside this test.
+    from fabu.store import JobStore
+
+    selected = local / "Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/Fabu"
+    JobStore(selected / "fabu.sqlite3")
     env.update(
         LOCALAPPDATA=str(local),
         FABU_STATE_DIR=str(tmp_path / "unrelated-state"),

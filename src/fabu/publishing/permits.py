@@ -19,7 +19,7 @@ class ExecutionPermit(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     id: str
     snapshot_digest: str
-    kind: Literal["simulation", "controlled_test", "verified"]
+    kind: Literal["simulation", "controlled_test", "verified", "user_job"]
     target_ids: tuple[str, ...]
     issued_at: datetime
     expires_at: datetime

@@ -552,3 +552,64 @@ def test_preupload_boundary_change_creates_no_upload_attempt(gateway_setup, chan
         gateway.prepare(snapshot, scope)
     assert not any(call.args[0] == "upload" for call in calls)
     assert not gateway.journal.rows
+
+
+def test_actual_yfb_upload_key_is_valid_and_metadata_is_preserved(gateway_setup):
+    import json
+
+    from fabu.publishing.gateway import resource_metadata
+    from fabu.tools import CommandResult
+
+    snapshot, gateway, authority, calls, responses = gateway_setup
+    snapshot = live_snapshot(snapshot)
+    data = {
+        **resource_metadata(snapshot, "video"),
+        "bucket": "cloud-publish",
+        "key": "yfb/test/output.mp4",
+        "compressed": False,
+    }
+    responses.append(
+        CommandResult(
+            exit_code=0,
+            stdout=json.dumps({"ok": True, "version": "3.2.32", "data": data}).encode(),
+            stderr=b"",
+        )
+    )
+    result = gateway._upload(snapshot, permit(authority, snapshot), "video")
+    assert result.key == data["key"] and result.raw["duration"] == data["duration"]
+    assert "--auto-meta" in calls[0].args
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"duration": 0.01},
+        {"size": 2},
+        {"bucket": "material-library"},
+        {"key": "yfb/test/../wrong"},
+        {"key": "yfb/test/video.mp4?token=bad"},
+    ],
+)
+def test_upload_rejects_wrong_or_truncated_resource(gateway_setup, change):
+    import json
+
+    from fabu.publishing.gateway import resource_metadata
+    from fabu.tools import CommandResult
+
+    snapshot, gateway, authority, calls, responses = gateway_setup
+    snapshot = live_snapshot(snapshot)
+    data = {
+        **resource_metadata(snapshot, "video"),
+        "bucket": "cloud-publish",
+        "key": "yfb/test/output.mp4",
+        **change,
+    }
+    responses.append(
+        CommandResult(
+            exit_code=0,
+            stdout=json.dumps({"ok": True, "version": "3.2.32", "data": data}).encode(),
+            stderr=b"",
+        )
+    )
+    with pytest.raises(ValueError):
+        gateway._upload(snapshot, permit(authority, snapshot), "video")

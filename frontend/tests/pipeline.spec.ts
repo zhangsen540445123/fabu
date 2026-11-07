@@ -171,8 +171,11 @@ test("pipeline editor uses backend ordering and completes a real local media wor
     page.getByRole("link", { name: "下载已验证成片" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "立即发布", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("heading", { name: "真实发布已阻断" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "开始真实发布", exact: true }),
+  ).not.toBeVisible();
   await page.screenshot({
     path: "test-results/optional-preview-approved.png",
     fullPage: true,

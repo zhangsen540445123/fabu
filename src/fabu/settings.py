@@ -81,6 +81,34 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     )
 
 
+def physical_state_dir(settings: Settings) -> Path:
+    """Resolve persisted files, not just a possibly merged MSIX AppData directory.
+
+    Runtime ownership/log files are deliberately not anchors: a desktop process
+    may have created them in native AppData while user data lives in LocalCache.
+    Never merge, copy, initialize, or choose between conflicting stores here.
+    """
+    from fabu.assets import assert_no_reparse
+
+    state = settings.state_dir
+    assert_no_reparse(state)
+    roots = set()
+    for relative in ("fabu.sqlite3", "ui-settings.json", "credentials/credentials.dpapi"):
+        path = state / relative
+        assert_no_reparse(path)
+        if path.is_file():
+            resolved = path.resolve(strict=True)
+            root = resolved.parents[len(Path(relative).parts) - 1]
+            assert_no_reparse(root)
+            roots.add(root)
+    if len(roots) > 1:
+        raise ValueError(
+            "State files resolve to different physical storage roots; "
+            "select an explicit FABU_STATE_DIR. No data was moved or rebuilt."
+        )
+    return next(iter(roots)) if roots else state.resolve()
+
+
 def check_environment(settings: Settings) -> EnvironmentReport:
     checks = {}
     for name in ("state_dir", "data_dir", "tools_dir"):

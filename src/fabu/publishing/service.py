@@ -198,7 +198,7 @@ def latest_run(store, job_id, scope):
     return dict(row) if row else None
 
 
-def public_run(store, run):
+def public_run(store, run, local_policy=None):
     snapshot = PublishSnapshot.model_validate_json(run["snapshot_json"])
     job = store.get(snapshot.job_id)
     with store.connection() as db:
@@ -231,6 +231,9 @@ def public_run(store, run):
             "DESC LIMIT 1",
             (run["id"],),
         ).fetchone()
+    from fabu.publishing.provider_tracking import observations_for_run
+
+    observations = observations_for_run(store, run["id"]) if run["scope"] == "live" else {}
     last = {row["target_id"]: row for row in rows}
     targets = []
     for target in snapshot.targets:
@@ -240,6 +243,7 @@ def public_run(store, run):
                 "account_id": target.account.account_id,
                 "platform": target.account.platform,
                 "nickname": target.account.nickname,
+                "provider_observation": observations.get(target.account.account_id),
                 "state": attempt["state"] if attempt else "PENDING",
                 "can_retry": bool(
                     attempt
@@ -257,13 +261,18 @@ def public_run(store, run):
     )
     failed_without_retry = any(t["state"] == "FAILED" and not t["can_retry"] for t in targets)
     active = bool(command and command["state"] in {"QUEUED", "RUNNING"})
+    from fabu.publishing.progress import summary_reason
+
+    reason = summary_reason(
+        run["reason"], observations, [t.account.account_id for t in snapshot.targets]
+    )
     return {
         "job_id": snapshot.job_id,
         "content_revision": snapshot.content_revision,
         "snapshot_digest": snapshot.digest,
         "scope": run["scope"],
         "state": run["state"],
-        "reason": run["reason"],
+        "reason": reason,
         "resource_blocked": resource_blocked,
         "source_conflict": source_conflict,
         "title": snapshot.title,
@@ -275,7 +284,10 @@ def public_run(store, run):
         "can_submit": job.state in {"READY", "PAUSED"}
         and job.content_revision == snapshot.content_revision
         and (snapshot.scheduled_at_utc is None or snapshot.scheduled_at_utc > datetime.now(UTC))
-        and run["scope"] == "simulation"
+        and (
+            run["scope"] == "simulation"
+            or (local_policy is not None and local_policy.is_authorized(job.id))
+        )
         and run["state"] in {"NEW", "PAUSED"}
         and not active
         and not needs_reconcile

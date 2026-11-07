@@ -40,7 +40,7 @@ def status(request: Request):
             if controller
             else {"running": False, "error_code": "worker_not_started"}
         ),
-        "publishing_enabled": False,
+        "publishing_enabled": request.app.state.live_policy.enabled(),
     }
 
 

@@ -94,6 +94,10 @@ class MemoryUploadJournal:
     def complete(self, digest, receipt):
         self.rows[(digest, receipt.resource)] = receipt
 
+    def not_started(self, digest, kind):
+        if (digest, kind) in self.rows and self.rows[(digest, kind)] is None:
+            del self.rows[(digest, kind)]
+
 
 class Publisher(Protocol):
     def preflight(self, snapshot: PublishSnapshot) -> CapabilityReport: ...

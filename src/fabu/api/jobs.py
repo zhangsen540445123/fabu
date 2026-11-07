@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fabu.domain import JobSpec
 from fabu.media.source import parse_youtube_url
+from fabu.publishing.progress import public_job
 from fabu.store import FrozenContent, InvalidTransition, StaleRevision
 
 router = APIRouter(prefix="/api/jobs")
@@ -17,7 +18,8 @@ class CancelRequest(BaseModel):
 
 @router.get("")
 def list_jobs(request: Request):
-    return request.app.state.store.list_jobs()
+    store = request.app.state.store
+    return [public_job(store, job) for job in store.list_jobs()]
 
 
 def _validate_spec(spec: JobSpec, request: Request):
@@ -51,7 +53,8 @@ def create_job(spec: JobSpec, request: Request):
 @router.get("/{job_id}")
 def get_job(job_id: str, request: Request):
     try:
-        return request.app.state.store.get(job_id)
+        store = request.app.state.store
+        return public_job(store, store.get(job_id))
     except KeyError as exc:
         raise HTTPException(404, "Task not found") from exc
 

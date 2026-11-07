@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   configurePublication,
+  getPublishingConnection,
   getAccounts,
   getPublicationForm,
   savePublicationDefaults,
@@ -18,6 +19,8 @@ import {
   type PublishRun,
   type PublicationDraft,
 } from "../api";
+import { providerReasonLabel } from "../publishingLabels";
+import { usePublishingReadiness } from "../publishing-readiness";
 import { beijingToUtc, formatBeijing } from "../publishing-time";
 import TargetStatus, { platformNames } from "./TargetStatus";
 export default function PublishForm({
@@ -27,6 +30,8 @@ export default function PublishForm({
   job: Job;
   refresh: () => Promise<void>;
 }) {
+  const { readiness } = usePublishingReadiness();
+  const [liveEnabled, setLiveEnabled] = useState(false);
   const [handoff, setHandoff] = useState<WorkflowHandoff | null>(null);
   const [profileName, setProfileName] = useState("日常助眠"),
     [profileMessage, setProfileMessage] = useState("");
@@ -109,7 +114,12 @@ export default function PublishForm({
               if (alive) setRun(r);
             })
             .catch((e) => {
-              if (alive) setError(String(e));
+              if (alive) {
+                setError(String(e));
+                setRun((previous) =>
+                  previous ? { ...previous, can_submit: false } : null,
+                );
+              }
             });
         void sync();
         timer = setInterval(() => void sync(), 1500);
@@ -145,7 +155,44 @@ export default function PublishForm({
       clearInterval(timer);
     };
   }, [job.id, job.revision, job.spec.publication_profile_id]);
+  useEffect(() => {
+    let alive = true;
+    setLiveEnabled(false);
+    if (scope !== "live") return;
+    async function syncPermission() {
+      try {
+        const connection = await getPublishingConnection();
+        if (alive) setLiveEnabled(connection?.live_enabled === true);
+      } catch {
+        if (alive) setLiveEnabled(false);
+      }
+    }
+    void syncPermission();
+    const timer = setInterval(() => void syncPermission(), 1500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [job.id, scope]);
+  const trackingInBackground =
+    job.pause_reason === "provider_tracking_pending" ||
+    handoff?.error_code === "provider_tracking_pending";
+  const liveReady =
+    liveEnabled &&
+    readiness.enabled &&
+    readiness.status === "ready" &&
+    !readiness.blockers.length;
+  const scheduleBlocked =
+    scope === "live" &&
+    (run?.mode === "native_schedule" || mode === "native_schedule") &&
+    !readiness.native_schedule_enabled;
   async function resumeHandoff() {
+    if (
+      busy ||
+      trackingInBackground ||
+      (scope === "live" && (!liveReady || scheduleBlocked))
+    )
+      return;
     setBusy(true);
     setError("");
     try {
@@ -251,14 +298,18 @@ export default function PublishForm({
     }
   }
   async function execute(action: "submit" | "reconcile") {
-    if (!run?.snapshot_digest) return;
+    if (!run?.snapshot_digest || busy || loading || commandActive) return;
     setBusy(true);
     setError("");
     try {
       if (action === "submit") {
-        if (scope !== "simulation" || run.scope !== "simulation")
-          throw new Error("真实投稿尚未解锁");
-        await submitPublication(job.id, run.snapshot_digest);
+        if (
+          run.scope !== scope ||
+          !run.can_submit ||
+          (scope === "live" && (!liveReady || scheduleBlocked))
+        )
+          throw new Error("当前发布未就绪或尚未授权，请刷新并核对发布状态");
+        await submitPublication(job.id, run.snapshot_digest, scope);
       } else {
         if (run.scope !== scope)
           throw new Error("发布环境已变更，请等待状态刷新");
@@ -300,33 +351,63 @@ export default function PublishForm({
           }
         >
           <option value="simulation">本地仿真（不会上传）</option>
-          <option value="live">真实账号（配置、预检与只读对账）</option>
+          <option value="live">真实账号（授权后可上传、投稿与跟踪）</option>
         </select>
       </label>
       <div className="preset-note">
         <strong>
           {scope === "simulation"
-            ? "仅本地仿真 · 真实发布未解锁"
-            : "真实账号配置 · 投稿功能未解锁"}
+            ? "仅本地仿真 · 不会真实上传或投稿"
+            : liveReady
+              ? "真实发布已授权并就绪"
+              : "真实发布已阻断 · 配置与只读查询仍可用"}
         </strong>
         <p>
-          当前操作不会上传或投稿。真实账号支持配置、预检及已有任务的只读对账；回执协议未经验证时仍显示结果不明，不会把“查询成功”当作“平台已公开”。预约时间表示平台原生预约，不是在本机等到时间再上传。
+          仅选择真实模式不代表已经发送。保存配置与预检不会投稿；明确点击真实发布或创建已授权自动流程后才可能上传、提交。
         </p>
+        <p>
+          三平台分别提交，最多消耗3次，每日本地上限3次；这是保守本地预算，不是官方剩余额度。官方拒绝时暂停，不支付、不盲目重试。
+        </p>
+        <p>
+          provider成功不等于平台已公开或平台完整成片通过；平台成片质量未验收，B站2秒故障风险仍需核对。本地成片生成不要求先确认样片。
+        </p>
+        <p>
+          平台原生定时尚未验收，保留设置；不是本地延时上传，不会回退为立即发布。
+        </p>
+        {scope === "live" && !liveReady && (
+          <ul>
+            {readiness.blockers.map((b, i) => (
+              <li className="break" key={i}>
+                {b}
+              </li>
+            ))}
+            {!liveEnabled && (
+              <li>本机连接尚未确认live授权（live_publish_not_enabled）。</li>
+            )}
+          </ul>
+        )}
       </div>
       {loading && <p role="status">正在读取已保存的发布配置…</p>}
       {scope === "live" && handoff?.state === "PAUSED" && (
         <div className="preset-note" role="status">
-          {handoff.error_code === "live_publish_not_enabled"
-            ? "成片已自动进入发布预检，默认配置已带入。真实投稿尚未通过免费额度与平台能力验收，当前未上传、未发布；正式提交仍受媒体批准策略约束。"
-            : "自动发布预检未通过，请核对成片、账号、话题与预约时间；当前未上传或发布。"}
-          {handoff.can_resume && (
+          <p>
+            {trackingInBackground
+              ? providerReasonLabel("provider_tracking_pending")
+              : handoff.error_code === "live_publish_not_enabled"
+                ? "成片已自动进入发布预检，但尚未获得真实投稿授权。请核对本机政策与流程配置。"
+                : "自动真实流程已暂停，请先核对成片、账号、预约时间和各目标回执；暂停不代表所有目标均未提交。"}
+          </p>
+          {handoff.error_code && !trackingInBackground && (
+            <p className="break">{providerReasonLabel(handoff.error_code)}</p>
+          )}
+          {handoff.can_resume && !trackingInBackground && (
             <button
               type="button"
               className="secondary"
-              disabled={busy || commandActive}
+              disabled={busy || commandActive || !liveReady || scheduleBlocked}
               onClick={() => void resumeHandoff()}
             >
-              重试发布预检（不上传）
+              恢复自动真实流程（可能上传/投稿）
             </button>
           )}
         </div>
@@ -454,11 +535,11 @@ export default function PublishForm({
                 onChange={(e) => setMode(e.target.value as typeof mode)}
               >
                 <option value="immediate">
-                  立即发布{scope === "simulation" ? "（仿真）" : "（尚未解锁）"}
+                  立即发布{scope === "simulation" ? "（仿真）" : "（真实）"}
                 </option>
                 <option value="native_schedule">
                   平台原生定时
-                  {scope === "simulation" ? "（仿真）" : "（尚未解锁）"}
+                  {scope === "simulation" ? "（仿真）" : "（尚未验收）"}
                 </option>
               </select>
             </label>
@@ -558,13 +639,34 @@ export default function PublishForm({
           资源上传结果不明：请先核对临时存储和扣次。本任务不会自动重新上传或继续投稿。
         </p>
       )}
-      {run?.can_submit && (
+      {run?.reason && (
+        <p className="preset-note break">
+          发布状态原因：{providerReasonLabel(run.reason)}（不等同于平台已公开）
+        </p>
+      )}
+      {scheduleBlocked && (
+        <p role="alert">
+          平台原生定时尚未验收，真实提交已阻断；不会回退为立即发布。
+        </p>
+      )}
+      {run?.can_submit && run.scope === scope && (
         <button
           className="primary"
-          disabled={busy}
+          disabled={
+            busy ||
+            loading ||
+            commandActive ||
+            (scope === "live" && (!liveReady || scheduleBlocked))
+          }
           onClick={() => void execute("submit")}
         >
-          {hasAttempts ? "续跑已确认未提交的目标" : "开始本地仿真"}
+          {scope === "live"
+            ? hasAttempts
+              ? "真实续跑已确认未提交的目标"
+              : "开始真实发布"
+            : hasAttempts
+              ? "续跑已确认未提交的目标"
+              : "开始本地仿真"}
         </button>
       )}
       {run?.can_reconcile && (

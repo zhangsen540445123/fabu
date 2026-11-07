@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from fabu.assets import assert_no_reparse
 from fabu.credentials import secure_directory
-from fabu.settings import Settings, check_environment, load_settings
+from fabu.settings import Settings, check_environment, load_settings, physical_state_dir
 from fabu.worker import AlreadyRunning, SingleInstance
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -76,10 +76,17 @@ def _read_private(path):
         raise ValueError("Runtime metadata could not be authenticated") from exc
 
 
+def _record_path(settings):
+    physical = runtime_path(settings.model_copy(update={"state_dir": physical_state_dir(settings)}))
+    # Keep authenticated stop available for legacy owners in the merged logical
+    # view; launch still requires the new signed physical/source identity.
+    return physical if physical.exists() else runtime_path(settings)
+
+
 def load_runtime_record(settings):
-    record = _read_private(runtime_path(settings))
+    record = _read_private(_record_path(settings))
     if (
-        record.get("state_dir") != str(settings.state_dir)
+        record.get("state_dir") not in {str(settings.state_dir), str(physical_state_dir(settings))}
         or record.get("port") != settings.port
         or not isinstance(record.get("secret"), str)
         or len(record["secret"]) != 64
@@ -147,7 +154,7 @@ def control_request(record, action):
 @contextmanager
 def _launch_lock(settings):
     deadline = time.monotonic() + 25
-    lock = SingleInstance("launcher:" + str(settings.state_dir))
+    lock = SingleInstance("launcher:" + str(physical_state_dir(settings)))
     while True:
         try:
             lock.__enter__()
@@ -163,7 +170,12 @@ def _launch_lock(settings):
 
 
 def _effective(settings):
-    path = settings.state_dir / "ui-settings.json"
+    state = physical_state_dir(settings)
+    values = {**settings.model_dump(), "state_dir": state}
+    if settings.tools_dir == settings.state_dir / "tools":
+        values["tools_dir"] = state / "tools"
+    settings = Settings.model_validate(values)
+    path = state / "ui-settings.json"
     assert_no_reparse(path)
     if path.is_file():
         from fabu.api.app import SettingsPatch
@@ -173,6 +185,67 @@ def _effective(settings):
             {**settings.model_dump(), **patch.model_dump(exclude_none=True)}
         )
     return settings
+
+
+def _expected_identity(settings):
+    return {
+        "source_root": str(ROOT.resolve()),
+        "python_executable": str(Path(sys.executable).resolve()),
+        "python_prefix": str(Path(sys.prefix).resolve()),
+        "state_dir": str(settings.state_dir),
+        "db_path": str(settings.db_path.resolve()),
+        "settings_path": str((settings.state_dir / "ui-settings.json").resolve()),
+        "credentials_path": str((settings.state_dir / "credentials/credentials.dpapi").resolve()),
+        "isolated": True,
+    }
+
+
+def _verify_runtime_identity(settings, data):
+    identity = data.get("identity", {})
+    expected = _expected_identity(settings)
+    if not isinstance(identity, dict) or any(identity.get(k) != v for k, v in expected.items()):
+        raise ValueError(
+            "Runtime identity does not match this checkout, interpreter or physical storage; "
+            "use authenticated stop for the old instance before starting again."
+        )
+    # Persisted UI choices must not silently differ from the reused application's
+    # effective configuration. Without a saved patch, preserve reuse semantics
+    # for callers that omit an earlier explicit data/tool override.
+    path = settings.state_dir / "ui-settings.json"
+    if path.is_file():
+        from fabu.api.app import SettingsPatch
+
+        patch = SettingsPatch.model_validate_json(path.read_text(encoding="utf-8"))
+        effective = identity.get("settings", {})
+        for key, value in patch.model_dump(mode="json", exclude_none=True).items():
+            if effective.get(key) != value:
+                raise ValueError(
+                    "Runtime configuration differs from saved settings; restart it safely"
+                )
+
+
+def _profile_environment(env, *, require_existing=False):
+    env = dict(env)
+    profile = ROOT / "scripts/start-fabu.profile.json"
+    assert_no_reparse(profile)
+    if not env.get("FABU_STATE_DIR") and profile.is_file():
+        if profile.stat().st_size > 4096:
+            raise ValueError("Invalid local launcher profile")
+        try:
+            value = json.loads(profile.read_text(encoding="utf-8"))
+            if set(value) != {"state_dir"} or not isinstance(value["state_dir"], str):
+                raise ValueError
+            state = value["state_dir"].replace("%LOCALAPPDATA%", env.get("LOCALAPPDATA", ""))
+            if not state or not Path(state).is_absolute() or "%" in state:
+                raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid local launcher profile") from exc
+        if require_existing and not (Path(state) / "fabu.sqlite3").is_file():
+            raise ValueError(
+                "Selected existing state database is missing; refusing to create a replacement"
+            )
+        env["FABU_STATE_DIR"] = state
+    return env
 
 
 def check_installation(settings):
@@ -199,6 +272,7 @@ def check_installation(settings):
         except importlib.metadata.PackageNotFoundError:
             dependencies[name] = "missing"
     return {
+        "identity": _expected_identity(settings),
         "checks": checks,
         "dependencies": dependencies,
         "environment": check_environment(settings).model_dump(mode="json"),
@@ -208,20 +282,24 @@ def check_installation(settings):
 
 
 def launch(settings: Settings, *, open_browser=True):
+    requested = settings
+    settings = _effective(settings)
     path = runtime_path(settings)
     with _launch_lock(settings):
         record = None
         reused = False
-        if path.exists():
-            old = load_runtime_record(settings)
+        owner_path = _record_path(requested)
+        if owner_path.exists():
+            old = load_runtime_record(requested)
             if _same_process(old):
                 data = control_request(old, "status")
                 if not data.get("ready"):
                     raise ValueError("Existing runtime is not ready; inspect its local log")
+                _verify_runtime_identity(settings, data)
                 record = old
                 reused = True
             else:
-                path.unlink()
+                owner_path.unlink()
         if record is None:
             if not (ROOT / "frontend/dist/index.html").is_file():
                 raise ValueError(f"Frontend build is missing: {ROOT / 'frontend/dist/index.html'}")
@@ -244,7 +322,7 @@ def launch(settings: Settings, *, open_browser=True):
             env.pop("PYTHONHOME", None)
             env["PYTHONUTF8"] = "1"
             child = subprocess.Popen(
-                [sys.executable, "-m", "fabu.runtime", "--config", str(config)],
+                [sys.executable, "-I", "-X", "utf8", "-m", "fabu.runtime", "--config", str(config)],
                 cwd=ROOT,
                 env=env,
                 stdin=subprocess.DEVNULL,
@@ -269,11 +347,14 @@ def launch(settings: Settings, *, open_browser=True):
                     ):
                         raise ValueError("Unexpected runtime owner; refusing takeover")
                     try:
-                        if control_request(candidate, "status").get("ready"):
-                            record = candidate
-                            break
+                        data = control_request(candidate, "status")
                     except (OSError, ValueError):
                         pass
+                    else:
+                        if data.get("ready"):
+                            _verify_runtime_identity(settings, data)
+                            record = candidate
+                            break
                 time.sleep(0.1)
             if record is None:
                 # Startup timeout is not proof of failure; never spawn a second instance.
@@ -291,7 +372,7 @@ def launch(settings: Settings, *, open_browser=True):
 
 def stop_owned_runtime(settings: Settings):
     with _launch_lock(settings):
-        path = runtime_path(settings)
+        path = _record_path(settings)
         if not path.exists():
             return False
         record = load_runtime_record(settings)
@@ -313,9 +394,12 @@ def main():
     parser = argparse.ArgumentParser(description="Fabu local Windows launcher")
     parser.add_argument("action", choices=["start", "stop", "check"])
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--project-root", type=Path)
     args = parser.parse_args()
     try:
-        env = dict(os.environ)
+        if args.project_root is not None and args.project_root.resolve() != ROOT.resolve():
+            raise ValueError("Launcher checkout does not match the script's requested project root")
+        env = _profile_environment(os.environ, require_existing=args.action == "start")
         if args.action == "stop":
             # Control identity is state_dir + port, not media/tool configuration.
             # A moved Node executable or invalid data path must not block shutdown.

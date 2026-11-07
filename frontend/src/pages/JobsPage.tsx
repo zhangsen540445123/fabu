@@ -26,7 +26,29 @@ const states: Record<string, string> = {
   CANCELED: "已取消",
   COMPLETED: "提交处理完成",
 };
+function isProviderTracking(job: Job): boolean {
+  return (
+    job.state === "PAUSED" && job.pause_reason === "provider_tracking_pending"
+  );
+}
+function jobStateLabel(job: Job): string {
+  if (job.pause_reason === "provider_reported_success")
+    return "服务商报告成功 · 待验收";
+  if (job.pause_reason === "provider_reported_failure") return "服务商报告失败";
+  if (job.pause_reason === "provider_tracking_needs_attention")
+    return "跟踪需核对";
+  return isProviderTracking(job)
+    ? "等待平台结果"
+    : (states[job.state] ?? job.state);
+}
 const reasons: Record<string, string> = {
+  provider_reported_success:
+    "服务商报告目标任务成功；平台公开状态及成片完整性尚未验收，不会自动重投",
+  provider_reported_failure:
+    "服务商报告某目标失败；请查看逐平台记录，不会自动重投",
+  provider_tracking_needs_attention:
+    "自动跟踪已达到上限或身份不明确，请核对平台结果；不会自动重投",
+  provider_tracking_pending: "已提交三平台，后台跟踪中；平台成片质量待确认",
   preview_required: "旧版样片暂停：可点击继续按所选预设处理，无需样片确认",
   source_unavailable: "下载未完成，请检查网络、访问权限与下载工具配置",
   source_authentication_required:
@@ -119,7 +141,7 @@ function JobDetail({
         <h3>{job.spec.title}</h3>
         <dl>
           <dt>状态</dt>
-          <dd>{states[job.state] ?? job.state}</dd>
+          <dd>{jobStateLabel(job)}</dd>
           <dt>来源</dt>
           <dd className="break">{job.spec.source_url}</dd>
           <dt>处理预设</dt>
@@ -128,7 +150,7 @@ function JobDetail({
               ? `${plan.preset.name} · v${plan.preset.revision}`
               : job.spec.preset_version_id}
           </dd>
-          <dt>异常原因</dt>
+          <dt>{isProviderTracking(job) ? "跟踪说明" : "异常原因"}</dt>
           <dd>
             {job.pause_reason
               ? (reasons[job.pause_reason] ?? job.pause_reason)
@@ -227,12 +249,14 @@ function JobDetail({
           ["READY", "PAUSED", "PUBLISHING", "COMPLETED", "CANCELED"].includes(
             job.state,
           ) && <PublishForm job={job} refresh={refresh} />}
-        {plan && ["PAUSED", "READY"].includes(job.state) && (
-          <details open={job.state === "PAUSED"}>
-            <summary>可选样片检查</summary>
-            <PreviewPanel job={job} refresh={refresh} />
-          </details>
-        )}
+        {plan &&
+          !job.content_frozen &&
+          ["PAUSED", "READY"].includes(job.state) && (
+            <details open={job.state === "PAUSED"}>
+              <summary>可选样片检查</summary>
+              <PreviewPanel job={job} refresh={refresh} />
+            </details>
+          )}
       </section>
     </div>
   );
@@ -256,6 +280,8 @@ export default function JobsPage({
     [error, setError] = useState("");
   const detail = jobs.find((j) => j.id === selected);
   async function action(job: Job, kind: "cancel" | "resume") {
+    if (job.content_frozen || (kind === "resume" && isProviderTracking(job)))
+      return;
     setBusy(true);
     setError("");
     try {
@@ -276,7 +302,7 @@ export default function JobsPage({
         ? status.kind === "preview"
           ? "正在生成样片，其他重任务串行等待"
           : status.kind === "publishing"
-            ? "正在执行发布仿真，其他重任务串行等待"
+            ? "正在执行发布流程，真实/仿真以任务配置与回执为准"
             : "正在执行本地处理任务"
         : "处理引擎已就绪，按队列串行运行";
   return (
@@ -314,7 +340,11 @@ export default function JobsPage({
           <span>需要关注</span>
           <strong>
             {String(
-              jobs.filter((j) => ["PAUSED", "FAILED"].includes(j.state)).length,
+              jobs.filter(
+                (j) =>
+                  ["PAUSED", "FAILED"].includes(j.state) &&
+                  !isProviderTracking(j),
+              ).length,
             ).padStart(2, "0")}
           </strong>
           <small>异常暂停，不盲目重试</small>
@@ -344,7 +374,7 @@ export default function JobsPage({
             <p>
               填入视频链接与标题，选择处理预设。
               <br />
-              目前不会上传或发布任何内容。
+              默认处理预设与发布配置自动带入；真实/仿真及阻断状态请在创建前确认。
             </p>
             <button className="secondary" onClick={() => setEditing(true)}>
               创建第一条任务
@@ -386,8 +416,11 @@ export default function JobsPage({
                       <span
                         className={`badge ${job.state === "FAILED" ? "danger" : ""}`}
                       >
-                        {states[job.state] ?? job.state}
+                        {jobStateLabel(job)}
                       </span>
+                      {isProviderTracking(job) && (
+                        <small>{reasons.provider_tracking_pending}</small>
+                      )}
                       {job.pause_reason === "preview_required" && (
                         <small>可继续处理，无需样片确认</small>
                       )}
@@ -429,6 +462,8 @@ export default function JobsPage({
                           查看
                         </button>
                         {["PAUSED", "FAILED"].includes(job.state) &&
+                          !job.content_frozen &&
+                          !isProviderTracking(job) &&
                           !job.output_manifest && (
                             <button
                               className="quiet"

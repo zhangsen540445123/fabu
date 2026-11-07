@@ -24,10 +24,13 @@ from fabu.publishing.templates import build_publish_snapshot
 
 
 class PublicationCoordinator:
-    def __init__(self, store, assets, presets, approvals, authority, worker, *, clock=None):
+    def __init__(
+        self, store, assets, presets, approvals, authority, worker, *, clock=None, local_policy=None
+    ):
         self.store, self.assets, self.presets, self.approvals = store, assets, presets, approvals
         self.authority, self.worker = authority, worker
         self.clock = clock or authority.clock
+        self.local_policy = local_policy
         self.checkpoint_hook = None
 
     def _owner(self):
@@ -75,6 +78,7 @@ class PublicationCoordinator:
             presets=self.presets,
             approvals=self.approvals,
             now=snapshot.created_at,
+            require_preview=not (self.local_policy and self.local_policy.is_authorized(job.id)),
         )
         if rebuilt != snapshot:
             raise ValueError("Snapshot is not the authoritative approved task")
@@ -147,8 +151,13 @@ class PublicationCoordinator:
         self._matching_content(job, snapshot)
         plan = load_job_plan(self.store, job.id)
         preset = self.presets.get_version(job.spec.preset_version_id)
-        if plan.engine_version != ENGINE_VERSION or not self.approvals.approval_matches(
-            preset, plan.asset_refs, compatibility_version(plan)
+        automatic = self.local_policy and self.local_policy.is_authorized(job.id)
+        self.approvals.validate_plan_binding(preset, plan)
+        if plan.engine_version != ENGINE_VERSION or (
+            not automatic
+            and not self.approvals.approval_matches(
+                preset, plan.asset_refs, compatibility_version(plan)
+            )
         ):
             raise ValueError("Publication preset approval is no longer valid")
         for item in [snapshot.output, snapshot.cover]:
@@ -364,6 +373,11 @@ class PublicationCoordinator:
         production_report=None,
     ):
         def preflight_problem(snapshot, report):
+            if permit.kind == "user_job":
+                if self.local_policy is None or self.local_policy.authority is not self.authority:
+                    return "job_policy_missing"
+                self.local_policy.validate(permit, snapshot)
+                return self.local_policy.preflight_problem(snapshot, report)
             trusted = verification is not None and verification.authority is self.authority
             controlled = False
             if permit.kind == "controlled_test":
@@ -412,6 +426,8 @@ class PublicationCoordinator:
             if issue:
                 return self._finish(run, "PAUSED", issue)
             self.authority.validate(permit, snapshot, real=execution == "live")
+            if permit.kind == "user_job":
+                self.local_policy.reserve(snapshot)
             self._reserve_sources(run, snapshot)
             publisher.journal = SqliteUploadJournal(self.store, snapshot, scope=execution)
             prepared = publisher.prepare(snapshot, permit)
@@ -446,6 +462,10 @@ class PublicationCoordinator:
                     )
                 self._hook("after_submit", target.account.account_id)
                 checked = persist_receipt(self.store, attempt, snapshot, execution, receipt)
+                if checked.state == "PROVIDER_ACCEPTED" and permit.kind == "user_job":
+                    # Acknowledged target is never retried, but it need not block other targets.
+                    # Provider delivery is tracked separately and is NOT platform/quality proof.
+                    continue
                 if checked.state == "PROVIDER_ACCEPTED":
                     results = reconcile_pending(
                         self.store, publisher, worker=self.worker, run_id=run["id"]
@@ -459,9 +479,14 @@ class PublicationCoordinator:
                         "PAUSED",
                         "target_failed" if checked.state == "FAILED" else "reconcile_required",
                     )
+            if permit.kind == "user_job":
+                return self._finish(run, "PAUSED", "provider_tracking_pending")
             return self._finish(run, "COMPLETE")
-        except Exception:
-            return self._finish(run, "PAUSED", "publication_stage_failed")
+        except Exception as exc:
+            from fabu.publishing.local_policy import LocalPolicyError
+
+            reason = str(exc) if isinstance(exc, LocalPolicyError) else "publication_stage_failed"
+            return self._finish(run, "PAUSED", reason)
 
     def recover_interrupted(self):
         self._owner()

@@ -78,7 +78,7 @@ export default function AccountsPage() {
       const result = await refreshPublishingAccounts();
       setCatalog(await getAccounts(scope));
       setMessage(
-        `已只读同步 ${result.refreshed} 个支持的平台账号。真实发布仍未解锁。`,
+        `已只读同步 ${result.refreshed} 个支持的平台账号；同步本身不会上传或投稿。真实流程以本机授权与就绪检查为准。`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "同步失败");
@@ -99,6 +99,14 @@ export default function AccountsPage() {
         <h2>蚁小二官方CLI连接</h2>
         <p>
           CLI是命令行工具，不是智能体。这里只保存本机凭证和进行只读查询，不上传或发布。
+        </p>
+        <p>
+          {connection?.live_enabled
+            ? "本机真实发布授权已开启"
+            : "本机真实发布尚未明确授权"}
+        </p>
+        <p>
+          授权不等于当前工具、凭证或默认配置已就绪，请查看工作台发布就绪状态。
         </p>
         <form onSubmit={(e) => void save(e)}>
           <fieldset disabled={busy}>
@@ -168,7 +176,7 @@ export default function AccountsPage() {
         )}
         {!catalog?.accounts.length && (
           <p>
-            尚无已同步的账号。配置连接后可进行只读同步，不会自动解锁真实发布。
+            尚无已同步的账号。配置连接后可进行只读同步，同步本身不会授权或发送真实投稿。
           </p>
         )}
         {catalog?.accounts.map((a) => (

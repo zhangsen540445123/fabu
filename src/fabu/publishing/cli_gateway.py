@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import re
 from contextlib import contextmanager
@@ -30,6 +31,10 @@ from fabu.publishing.models import CLI_CONTRACT_VERSION, verify_publish_snapshot
 from fabu.tools import CommandSpec, run_command
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
+
+
+class TransportNotStarted(ValueError):
+    """Only raised by local preparation before invoking the process runner."""
 
 
 class CliPublisher:
@@ -69,6 +74,13 @@ class CliPublisher:
         self.cancel = cancel or Event()
         self._version_hash = None
         self.verification_context = None
+        self.user_job_context = None
+
+    def bind_user_job(self, policy, permit, snapshot):
+        if policy.authority is not self.authority:
+            raise ValueError("Job policy belongs to another authority")
+        policy.validate(permit, snapshot)
+        self.user_job_context = (policy, permit, snapshot)
 
     def bind_controlled_test(self, service, gate, permit, snapshot):
         if service.authority is not self.authority:
@@ -80,6 +92,14 @@ class CliPublisher:
 
     def _controlled_identity(self, snapshot, permit):
         self.authority.validate(permit, snapshot, real=True)
+        if permit.kind == "user_job":
+            if self.user_job_context is None:
+                raise ValueError("A user job requires explicit local policy binding")
+            policy, original, bound = self.user_job_context
+            if permit != original or snapshot != bound:
+                raise ValueError("Local job scope changed")
+            policy.validate(permit, snapshot)
+            return
         if self.verification_context is None:
             if self.runner is run_command:
                 raise ValueError(
@@ -98,38 +118,53 @@ class CliPublisher:
             raise ValueError("Controlled CLI binary/client identity changed")
 
     def _call(self, args, *, timeout=60):
-        if args and (args[0] == "upload" or args[0] == "publish" and "--dry-run" not in args):
-            if self.verification_context is not None:
-                service, gate, permit, snapshot = self.verification_context
-                self._controlled_identity(snapshot, permit)
-                deadline = min(gate.expires_at, permit.expires_at)
-                remaining = (deadline - self.authority.clock()).total_seconds()
-                if remaining <= 0:
-                    raise ValueError("Write deadline expired")
-                timeout = min(timeout, remaining)
-            elif self.runner is run_command:
-                raise ValueError("No verified cost boundary for real external writes")
-        if self.cancel.is_set():
-            raise ValueError("Publishing operation canceled before start")
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("YIXIAOER_", "YXER_"))}
-        system = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32"
-        # The CLI resolves media tools on PATH; inherit only explicitly bound directories.
-        env["PATH"] = str(self.media_tools) + os.pathsep + str(system)
-        env["YIXIAOER_PROJECT_DIR"] = str(self.package_root)
-        env["YIXIAOER_API_URL"] = "https://www.yixiaoer.cn/api"
-        with self.credentials.temporary_cli_config() as config:
-            env["YIXIAOER_CONFIG"] = str(config)
-            result = self.runner(
-                CommandSpec(
+        started = False
+        try:
+            if args and (args[0] == "upload" or args[0] == "publish" and "--dry-run" not in args):
+                if self.user_job_context is not None:
+                    policy, permit, snapshot = self.user_job_context
+                    self._controlled_identity(snapshot, permit)
+                    policy.reserve(snapshot)
+                    timeout = min(
+                        timeout,
+                        max(0, (permit.expires_at - self.authority.clock()).total_seconds()),
+                    )
+                    if timeout <= 0:
+                        raise ValueError("Job permit expired")
+                elif self.verification_context is not None:
+                    service, gate, permit, snapshot = self.verification_context
+                    self._controlled_identity(snapshot, permit)
+                    deadline = min(gate.expires_at, permit.expires_at)
+                    remaining = (deadline - self.authority.clock()).total_seconds()
+                    if remaining <= 0:
+                        raise ValueError("Write deadline expired")
+                    timeout = min(timeout, remaining)
+                elif self.runner is run_command:
+                    raise ValueError("No verified cost boundary for real external writes")
+            if self.cancel.is_set():
+                raise ValueError("Publishing operation canceled before start")
+            env = {k: v for k, v in os.environ.items() if not k.startswith(("YIXIAOER_", "YXER_"))}
+            system = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32"
+            # The CLI resolves media tools on PATH; inherit only explicitly bound directories.
+            env["PATH"] = str(self.media_tools) + os.pathsep + str(system)
+            env["YIXIAOER_PROJECT_DIR"] = str(self.package_root)
+            env["YIXIAOER_API_URL"] = "https://www.yixiaoer.cn/api"
+            with self.credentials.temporary_cli_config() as config:
+                env["YIXIAOER_CONFIG"] = str(config)
+                command = CommandSpec(
                     executable=self.executable,
                     args=args,
                     cwd=self.package_root,
                     env=env,
                     timeout_s=timeout,
                     max_output_bytes=4_194_304,
-                ),
-                self.cancel,
-            )
+                )
+                started = True
+                result = self.runner(command, self.cancel)
+        except (ValueError, OSError):
+            if not started:
+                raise TransportNotStarted("CLI transport did not start") from None
+            raise
         try:
             raw = json.loads((result.stdout or result.stderr).decode("utf-8-sig"))
         except (ValueError, UnicodeError):
@@ -209,6 +244,20 @@ class CliPublisher:
             blockers=["free_write_and_platform_acceptance_not_verified"],
         )
 
+        if self.user_job_context is not None:
+            policy, permit, bound = self.user_job_context
+            self._controlled_identity(snapshot, permit)
+            # This is an execution strategy, not claimed evidence of platform success/free quota.
+            report = report.model_copy(
+                update={
+                    "submission_strategy": "per_target",
+                    "blockers": [],
+                    "evidence_refs": [
+                        "official-cli:read-only-accounts",
+                        "local-policy:explicit-new-job",
+                    ],
+                }
+            )
         if self.verification_context is not None:
             service, gate, permit, bound = self.verification_context
             self._controlled_identity(snapshot, permit)
@@ -237,20 +286,49 @@ class CliPublisher:
             expected = snapshot.output.sha256 if kind == "video" else snapshot.cover.sha256
             if cached.sha256 != expected:
                 raise ValueError("Cached resource belongs to different media")
+            if permit.kind == "user_job":
+                self._validate_upload_data(snapshot, permit, kind, cached.raw)
+                if cached.key != cached.raw.get("key"):
+                    raise ValueError("Cached media key differs from its remote receipt")
             return cached
         self.authority.consume(permit, snapshot, "upload")
         self.journal.begin(snapshot.digest, kind)
         path = snapshot.output.path if kind == "video" else snapshot.cover.local_path
-        raw, good = self._call(
-            ["upload", str(path), "--bucket", "cloud-publish", "--json"], timeout=86400
-        )
+        try:
+            raw, good = self._call(
+                ["upload", str(path), "--bucket", "cloud-publish", "--auto-meta", "--json"],
+                timeout=86400,
+            )
+        except TransportNotStarted:
+            abort = getattr(self.journal, "not_started", None)
+            if abort is not None:
+                abort(snapshot.digest, kind)
+            raise
         data = raw.get("data", {})
         if not good or not isinstance(data, dict):
             raise ValueError("Resource upload outcome unknown; do not repeat blindly")
+        metadata = self._validate_upload_data(snapshot, permit, kind, data)
+        key = data["key"]
+        self._files(snapshot)
+        receipt = UploadReceipt(
+            resource=kind,
+            sha256=snapshot.output.sha256 if kind == "video" else snapshot.cover.sha256,
+            key=key,
+            metadata=metadata,
+            raw=data,
+        )
+        self.journal.complete(snapshot.digest, receipt)
+        return receipt
+
+    def _validate_upload_data(self, snapshot, permit, kind, data):
+        if not isinstance(data, dict):
+            raise ValueError("Upload receipt is invalid")
         key = data.get("key")
         if (
             not isinstance(key, str)
-            or not key.startswith("cloud-publish/")
+            or not key.startswith(("cloud-publish/", "yfb/"))
+            or any(c in key for c in ("?", "#", "\\", ":"))
+            or data.get("bucket", "cloud-publish") != "cloud-publish"
             or ".." in key
             or len(key) > 2048
             or any(ord(c) < 32 for c in key)
@@ -264,16 +342,26 @@ class CliPublisher:
             if field in metadata
         ):
             raise ValueError("Uploaded media metadata differs from the frozen file")
-        self._files(snapshot)
-        receipt = UploadReceipt(
-            resource=kind,
-            sha256=snapshot.output.sha256 if kind == "video" else snapshot.cover.sha256,
-            key=key,
-            metadata=metadata,
-            raw=data,
-        )
-        self.journal.complete(snapshot.digest, receipt)
-        return receipt
+        if permit.kind == "user_job" and (
+            data.get("bucket") != "cloud-publish"
+            or any(field not in data for field in ("size", "width", "height"))
+            or kind == "video"
+            and "duration" not in data
+        ):
+            raise ValueError("Upload receipt is missing required media identity")
+        if kind == "video" and "duration" in data:
+            try:
+                duration = float(data["duration"])
+            except (TypeError, ValueError):
+                raise ValueError("Uploaded duration is invalid") from None
+            expected = metadata["duration"]
+            if (
+                isinstance(data["duration"], bool)
+                or not math.isfinite(duration)
+                or abs(duration - expected) > max(0.25, expected * 0.001)
+            ):
+                raise ValueError("Uploaded duration differs from verified output")
+        return metadata
 
     def _validate_payloads(self, snapshot, permit, payloads, client_id, *, dry_run):
         for target in snapshot.targets:

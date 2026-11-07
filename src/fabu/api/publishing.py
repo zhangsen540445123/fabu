@@ -20,7 +20,6 @@ from fabu.publishing.service import (
     latest_run,
     load_config,
     public_run,
-    require_simulation,
     save_draft,
 )
 from fabu.publishing.templates import build_publish_snapshot
@@ -50,6 +49,7 @@ def coordinator(app, worker=None):
         app.state.approvals,
         app.state.publication_authority,
         worker,
+        local_policy=getattr(app.state, "live_policy", None),
     )
 
 
@@ -66,7 +66,7 @@ def conflict(exc):
 def accounts(request: Request, scope: Scope = "simulation"):
     return {
         "scope": scope,
-        "live_enabled": False,
+        "live_enabled": request.app.state.live_policy.enabled(),
         "accounts": [
             {
                 **account.model_dump(mode="json"),
@@ -107,10 +107,11 @@ def preflight(command: PreflightRequest, request: Request):
                 assets=app.state.assets,
                 presets=app.state.presets,
                 approvals=app.state.approvals,
+                require_preview=not app.state.live_policy.is_authorized(job.id),
             )
             run = bound.register(snapshot, command.scope)
         bound._files_and_approval(bound._snapshot(run))
-        return public_run(app.state.store, run)
+        return public_run(app.state.store, run, app.state.live_policy)
     except (ValueError, KeyError) as exc:
         raise conflict(exc) from exc
 
@@ -121,7 +122,7 @@ def targets(job_id: str, request: Request, scope: Scope = "simulation"):
         request.app.state.store.get(job_id)
         run = latest_run(request.app.state.store, job_id, scope)
         return (
-            public_run(request.app.state.store, run)
+            public_run(request.app.state.store, run, request.app.state.live_policy)
             if run
             else {
                 "scope": scope,
@@ -137,8 +138,9 @@ def targets(job_id: str, request: Request, scope: Scope = "simulation"):
 
 def enqueue(job_id, command, request, action):
     try:
-        if action == "submit":
-            require_simulation(command.scope)
+        if action == "submit" and command.scope == "live":
+            if not request.app.state.live_policy.is_authorized(job_id):
+                raise ValueError("An explicitly authorized new workflow is required")
         run = coordinator(request.app).status(command.snapshot_digest, command.scope)
         if run["job_id"] != job_id:
             raise ValueError("Snapshot is for another task")
@@ -205,7 +207,7 @@ def create_workflow(command: WorkflowRequest, request: Request):
         return request.app.state.publication_profiles.create(command)
     except (ValueError, KeyError) as exc:
         raise HTTPException(
-            409, "流程条件不满足：核对模板、账号、话题、时间；真实自动发布尚未解锁"
+            409, "流程条件不满足：核对默认预设、发布配置、账号、话题、时间及本机执行授权"
         ) from exc
 
 
@@ -249,5 +251,25 @@ def configure_defaults(command: DefaultsRequest, request: Request):
 def publication_form(job_id: str, request: Request, scope: Scope | None = None):
     try:
         return form_for_job(request.app, job_id, scope)
+    except (ValueError, KeyError) as exc:
+        raise conflict(exc) from exc
+
+
+@router.get("/publishing/readiness")
+def publishing_readiness(request: Request):
+    return request.app.state.live_policy.readiness()
+
+
+class DefaultPresetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    preset_version_id: str = Field(min_length=1, max_length=100)
+
+
+@router.put("/publishing/default-preset")
+def configure_default_preset(command: DefaultPresetRequest, request: Request):
+    from fabu.publishing.defaults import set_default_preset
+
+    try:
+        return set_default_preset(request.app, command.preset_version_id)
     except (ValueError, KeyError) as exc:
         raise conflict(exc) from exc

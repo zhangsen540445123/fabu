@@ -45,7 +45,9 @@ def connection_status(app):
     return {
         "configured": app.state.credentials.configured(),
         "package_root": root,
-        "live_enabled": False,
+        "live_enabled": bool(
+            getattr(app.state, "live_policy", None) and app.state.live_policy.enabled()
+        ),
     }
 
 
@@ -115,4 +117,8 @@ def refresh_accounts(app):
                         now.isoformat(),
                     ),
                 )
-    return {"refreshed": len(entries), "checked_at": now, "live_enabled": False}
+    return {
+        "refreshed": len(entries),
+        "checked_at": now,
+        "live_enabled": connection_status(app)["live_enabled"],
+    }

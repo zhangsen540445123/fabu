@@ -4,6 +4,7 @@ import argparse
 import hmac
 import os
 import socket
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -16,7 +17,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from fabu.api.app import create_app
-from fabu.launcher import _read_private, _signature, _write_private, runtime_path
+from fabu.launcher import ROOT, _effective, _read_private, _signature, _write_private, runtime_path
 from fabu.settings import Settings
 from fabu.store import JobStore
 
@@ -31,7 +32,7 @@ class ControlCommand(BaseModel):
 
 def serve(config_path):
     boot = _read_private(config_path)
-    settings = Settings.model_validate(boot["settings"])
+    settings = _effective(Settings.model_validate(boot["settings"]))
     path = runtime_path(settings)
     if config_path.parent != path.parent or not config_path.name.startswith("launch-"):
         raise ValueError("Runtime config must be in its private directory")
@@ -54,7 +55,9 @@ def serve(config_path):
 
                 log = path.parent / "runtime.log"
                 assert_no_reparse(log)
-                log.write_text("runtime_ready: local publishing disabled\n", encoding="utf-8")
+                log.write_text(
+                    "runtime_ready: new jobs require explicit local policy\n", encoding="utf-8"
+                )
                 yield
 
         app.router.lifespan_context = owned_lifespan
@@ -77,6 +80,21 @@ def serve(config_path):
             "state_dir": str(settings.state_dir),
             "secret": secret,
         }
+
+        def identity():
+            return {
+                "source_root": str(ROOT.resolve()),
+                "python_executable": str(Path(sys.executable).resolve()),
+                "python_prefix": str(Path(sys.prefix).resolve()),
+                "state_dir": str(app.state.settings.state_dir.resolve()),
+                "db_path": str(app.state.store.path.resolve()),
+                "settings_path": str((app.state.settings.state_dir / "ui-settings.json").resolve()),
+                "credentials_path": str(app.state.credentials.path.resolve()),
+                "isolated": bool(sys.flags.isolated),
+                "settings": app.state.settings.model_dump(mode="json"),
+            }
+
+        record["identity"] = identity()
         used = {}
         lock = threading.Lock()
 
@@ -101,6 +119,7 @@ def serve(config_path):
             data = {
                 "nonce": command.nonce,
                 "pid": os.getpid(),
+                "identity": identity(),
                 "ready": server.started
                 and app.state.media_controller.status()["running"]
                 and not server.should_exit,

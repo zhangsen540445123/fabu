@@ -2,7 +2,8 @@
 setlocal EnableExtensions DisableDelayedExpansion
 rem Fixed desktop profile: do not inherit a stale shell's FABU_* identity or tool paths.
 if not defined LOCALAPPDATA goto missing_localappdata
-set "FABU_STATE_DIR=%LOCALAPPDATA%\Fabu"
+rem The launcher reads the explicit physical store from start-fabu.profile.json.
+set "FABU_STATE_DIR="
 set "FABU_PORT=8765"
 set "FABU_BIND_HOST=127.0.0.1"
 set "FABU_DATA_DIR="
@@ -14,7 +15,7 @@ set "PYTHONIOENCODING=utf-8"
 set "PYTHON=%~dp0..\.venv\Scripts\python.exe"
 if not exist "%PYTHON%" goto missing_python
 rem Use the same authenticated launcher as PowerShell, without PowerShell policy changes.
-"%PYTHON%" -I -X utf8 -m fabu.launcher start
+"%PYTHON%" -I -X utf8 -m fabu.launcher start --project-root "%~dp0.."
 set "RESULT=%ERRORLEVEL%"
 if "%RESULT%"=="0" exit /b 0
 echo.

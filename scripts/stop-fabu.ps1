@@ -8,5 +8,5 @@ if ($Port) { $env:FABU_PORT = [string]$Port }
 $env:PYTHONUTF8 = '1'
 # Isolated imports use this venv, not the caller's directory or stale PYTHONPATH.
 # No taskkill or Stop-Process by name: authenticated local control checks PID and creation time.
-& $python -I -X utf8 -m fabu.launcher stop
+& $python -I -X utf8 -m fabu.launcher stop --project-root $root
 exit $LASTEXITCODE
