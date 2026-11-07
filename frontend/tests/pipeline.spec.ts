@@ -4,6 +4,15 @@ test("pipeline editor uses backend ordering and completes a real local media wor
 }) => {
   test.setTimeout(90000);
   const faults: string[] = [];
+  const resumeRequests: string[] = [];
+  const approvalRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "POST") return;
+    const path = new URL(request.url()).pathname;
+    if (/^\/api\/jobs\/[^/]+\/resume$/.test(path)) resumeRequests.push(path);
+    if (/^\/api\/previews\/[^/]+\/approve$/.test(path))
+      approvalRequests.push(path);
+  });
   page.on("pageerror", (e) => faults.push(e.message));
   await page.goto("/");
   await expect(page.locator(".app-shell")).toHaveCSS("display", "flex");
@@ -35,11 +44,57 @@ test("pipeline editor uses backend ordering and completes a real local media wor
   await page
     .getByLabel("处理预设")
     .selectOption({ label: "助眠处理 · 验收模板 · v2" });
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/jobs" &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "保存本地任务" }).click();
-  await expect(page.getByText("等待样片确认")).toBeVisible({ timeout: 15000 });
+  const job = await (await created).json();
+  const row = page
+    .getByRole("row")
+    .filter({
+      has: page.getByRole("button", {
+        name: "沉浸式剪发 · 流水线验收",
+        exact: true,
+      }),
+    });
+  await expect(row.getByText("成片就绪", { exact: true })).toBeVisible({
+    timeout: 30000,
+  });
+  expect(approvalRequests).toEqual([]);
+  expect(resumeRequests).toEqual([]);
   await page
     .getByRole("button", { name: "沉浸式剪发 · 流水线验收", exact: true })
     .click();
+  await expect(page.getByText("本地成片已验证", { exact: true })).toBeVisible();
+  const output = page.getByRole("link", { name: "下载已验证成片" });
+  await expect(output).toBeVisible();
+  await expect(output).toHaveAttribute("href", `/api/jobs/${job.id}/output`);
+  const outputResponse = await page.request.get(
+    (await output.getAttribute("href"))!,
+  );
+  expect(outputResponse.status()).toBe(200);
+  expect(outputResponse.headers()["content-type"]).toContain("video/");
+  const previewsResponse = await page.request.get(
+    `/api/jobs/${job.id}/previews`,
+  );
+  expect(previewsResponse.status()).toBe(200);
+  expect(await previewsResponse.json()).toEqual([]);
+  const readyResponse = await page.request.get(`/api/jobs/${job.id}`);
+  expect(readyResponse.status()).toBe(200);
+  const ready = await readyResponse.json();
+  expect(ready.state).toBe("READY");
+  expect(ready.output_manifest).toBeTruthy();
+  await page.screenshot({
+    path: "test-results/local-output-ready.png",
+    fullPage: true,
+  });
+  const optionalReview = page
+    .locator("details")
+    .filter({ has: page.getByText("可选样片检查", { exact: true }) });
+  await expect(optionalReview).not.toHaveAttribute("open");
+  await page.getByText("可选样片检查", { exact: true }).click();
   await page.getByRole("button", { name: "生成样片", exact: true }).click();
   await expect(
     page.getByRole("link", { name: "下载正式HEVC样片" }).first(),
@@ -77,14 +132,32 @@ test("pipeline editor uses backend ordering and completes a real local media wor
       video.muted = false;
     });
   await expect(
-    page.getByRole("button", { name: "确认预设并继续处理" }),
+    page.getByRole("button", { name: "确认样片", exact: true }),
   ).toBeDisabled();
   await page.screenshot({
     path: "test-results/preview-confirmation.png",
     fullPage: true,
   });
   await page.getByRole("checkbox", { name: /我已检查正式样片/ }).check();
-  await page.getByRole("button", { name: "确认预设并继续处理" }).click();
+  const approvalResponse = page.waitForResponse(
+    (response) =>
+      /\/api\/previews\/[^/]+\/approve$/.test(
+        new URL(response.url()).pathname,
+      ) && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "确认样片", exact: true }).click();
+  expect((await approvalResponse).status()).toBe(200);
+  await expect(
+    page.getByRole("button", { name: "样片已确认", exact: true }),
+  ).toBeDisabled();
+  const afterReviewResponse = await page.request.get(`/api/jobs/${job.id}`);
+  expect(afterReviewResponse.status()).toBe(200);
+  const afterReview = await afterReviewResponse.json();
+  expect(afterReview.state).toBe("READY");
+  expect(afterReview.revision).toBe(ready.revision);
+  expect(afterReview.output_manifest).toEqual(ready.output_manifest);
+  expect(approvalRequests).toHaveLength(1);
+  expect(resumeRequests).toEqual([]);
   await expect(page.getByText("本地成片已验证", { exact: true })).toBeVisible({
     timeout: 20000,
   });
@@ -95,7 +168,7 @@ test("pipeline editor uses backend ordering and completes a real local media wor
     page.getByRole("button", { name: "立即发布", exact: true }),
   ).toBeDisabled();
   await page.screenshot({
-    path: "test-results/local-output-ready.png",
+    path: "test-results/optional-preview-approved.png",
     fullPage: true,
   });
   await page.getByRole("button", { name: "关闭任务详情" }).click();

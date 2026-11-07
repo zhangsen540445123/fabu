@@ -50,16 +50,18 @@ class PreviewApprovalStore:
                 raise PlanInvalid("Preset asset no longer matches the preview")
         return semantic_fingerprint(preset, {a: assets[a].sha256 for a in sorted(used)}, engine)
 
+    def validate_plan_binding(self, preset: PresetVersion, plan) -> None:
+        """Validate immutable media binding without asserting or recording visual consent."""
+        self._check_tools(plan)
+        if plan.engine_version != ENGINE_VERSION or plan.preset_digest != self._key(
+            preset, plan.asset_refs, compatibility_version(plan)
+        ):
+            raise PlanInvalid("Media plan is not for this preset or compatible engine")
+
     def record_preview(self, manifest: PreviewManifest, preset_version_id: str) -> None:
         verify_preview(manifest)
         preset = self.presets.get_version(preset_version_id)
-        self._check_tools(manifest.plan)
-        if (
-            manifest.plan.engine_version != ENGINE_VERSION
-            or manifest.plan.preset_digest
-            != self._key(preset, manifest.plan.asset_refs, compatibility_version(manifest.plan))
-        ):
-            raise PlanInvalid("Preview is not for this preset or compatible engine")
+        self.validate_plan_binding(preset, manifest.plan)
         with self.store.transaction() as db:
             existing = db.execute(
                 "SELECT manifest_json FROM media_previews WHERE id=?", (manifest.id,)

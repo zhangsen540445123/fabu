@@ -1,4 +1,4 @@
-"""Single-worker media orchestration with immutable checkpoints and explicit preview consent."""
+"""Preset-driven local rendering with immutable checkpoints and optional quality previews."""
 
 import os
 from collections.abc import Callable
@@ -12,7 +12,6 @@ from fabu.domain import JobSnapshot
 from fabu.media.approvals import PreviewApprovalStore
 from fabu.media.compiler import bind_tool_identity, compile_plan
 from fabu.media.models import (
-    ENGINE_VERSION,
     InputBundle,
     MediaPlan,
     OutputManifest,
@@ -195,8 +194,8 @@ class MediaService:
             )
             plan = bind_tool_identity(plan, preset, self.tools.identity(force=True))
             job = self._plan_checkpoint(job, source, plan)
-            if not self.approvals.approval_matches(preset, refs, compatibility_version(plan)):
-                raise ProcessingPaused("preview_required")
+            # Selecting this immutable preset authorizes local processing; optional
+            # visual review is not a prerequisite and no approval record is fabricated.
             job = self.store.transition(job.id, job.revision, "PROCESSING", None)
             stage = "render_failed"
             directory = self.workspace / job.id / str(job.content_revision)
@@ -252,7 +251,7 @@ def load_job_plan(store: JobStore, job_id: str) -> MediaPlan:
     return plan
 
 
-def require_approved_job_output(
+def require_verified_job_output(
     store: JobStore, presets: PresetStore, approvals: PreviewApprovalStore, job: JobSnapshot
 ) -> OutputManifest:
     current = store.get(job.id)
@@ -260,10 +259,7 @@ def require_approved_job_output(
         raise PlanInvalid("Task has no current ready media output")
     plan = load_job_plan(store, job.id)
     preset = presets.get_version(current.spec.preset_version_id)
-    if plan.engine_version != ENGINE_VERSION or not approvals.approval_matches(
-        preset, plan.asset_refs, compatibility_version(plan)
-    ):
-        raise PlanInvalid("The media preset has no compatible preview approval")
+    approvals.validate_plan_binding(preset, plan)
     output = OutputManifest.model_validate(current.output_manifest)
     if output.plan_digest != plan.digest or current.plan_digest != plan.digest:
         raise PlanInvalid("Output is not for this frozen processing snapshot")
@@ -273,6 +269,18 @@ def require_approved_job_output(
         or output.path.stat().st_size != output.size_bytes
         or sha256_file(output.path) != output.sha256
     ):
-        raise PlanInvalid("Approved output is missing or changed")
+        raise PlanInvalid("Verified output is missing or changed")
     validate_metadata(output.media_info, plan)
+    return output
+
+
+def require_approved_job_output(
+    store: JobStore, presets: PresetStore, approvals: PreviewApprovalStore, job: JobSnapshot
+) -> OutputManifest:
+    """Publishing retains its separate visual-approval policy; local downloads do not."""
+    output = require_verified_job_output(store, presets, approvals, job)
+    plan = load_job_plan(store, job.id)
+    preset = presets.get_version(job.spec.preset_version_id)
+    if not approvals.approval_matches(preset, plan.asset_refs, compatibility_version(plan)):
+        raise PlanInvalid("The media preset has no compatible preview approval")
     return output

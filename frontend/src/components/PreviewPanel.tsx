@@ -91,13 +91,16 @@ export default function PreviewPanel({
       setBusy(false);
     }
   }
+  const canReview =
+    ["PAUSED", "READY"].includes(job.state) && !job.content_frozen;
+  const resumeAfterApproval = job.state === "PAUSED" && !job.output_manifest;
   async function confirm() {
-    if (!sample || !checked) return;
+    if (!sample || sample.approved || !checked || busy || !canReview) return;
     setBusy(true);
     setError("");
     try {
       await approvePreview(sample.id);
-      await resumeJob(job);
+      if (resumeAfterApproval) await resumeJob(job);
       await refresh();
       setSample({ ...sample, approved: true });
     } catch (e) {
@@ -108,9 +111,9 @@ export default function PreviewPanel({
   }
   return (
     <section className="preview-panel">
-      <h3>先看样片，再确认预设</h3>
+      <h3>样片检查（可选）</h3>
       <p>
-        默认检查主片15秒，并覆盖片头片尾及关键图层边界。只生成本地文件，不会发布。
+        样片检查可选，不影响本地成片生成。默认检查主片15秒，并覆盖片头片尾及关键图层边界。只生成本地文件，不会发布。
       </p>
       <label className="inline-check">
         <input
@@ -146,7 +149,7 @@ export default function PreviewPanel({
       )}
       <button
         className="secondary"
-        disabled={busy || job.content_frozen}
+        disabled={busy || !canReview}
         onClick={() => void generate()}
       >
         {busy && !sample ? "生成样片中…" : "生成样片"}
@@ -188,15 +191,17 @@ export default function PreviewPanel({
           </label>
           <button
             className="primary"
-            disabled={
-              !checked || busy || job.content_frozen || job.state !== "PAUSED"
-            }
+            disabled={!checked || busy || !canReview || sample.approved}
             onClick={() => void confirm()}
           >
-            确认预设并继续处理
+            {sample.approved
+              ? "样片已确认"
+              : resumeAfterApproval
+                ? "确认预设并继续处理"
+                : "确认样片"}
           </button>
           <p>
-            确认绑定处理参数、素材与引擎版本；后续合规视频可复用，不必每天重复确认。
+            确认绑定处理参数、素材与引擎版本；已有成片不会重新处理。发布仍需通过样片确认等专用预检，不会因确认样片而自动获得发布权限。
           </p>
         </>
       )}

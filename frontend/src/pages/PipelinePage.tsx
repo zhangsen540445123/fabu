@@ -134,7 +134,7 @@ export default function PipelinePage({
       setDoc(documentOf(version));
       setPresets(await getPresets());
       setMessage(
-        `版本 ${version.revision} 已保存。修改处理参数后，需要使用样片重新确认。`,
+        `版本 ${version.revision} 已保存。任务将按所选版本自动处理，样片检查可选。`,
       );
       onChanged?.();
     } catch (e) {
@@ -272,7 +272,7 @@ export default function PipelinePage({
                     {presets.map((p) => (
                       <option key={p.version.id} value={p.version.id}>
                         {p.version.name} · v{p.version.revision}
-                        {p.approved ? " · 已确认" : ""}
+                        {p.approved ? " · 样片已确认" : ""}
                       </option>
                     ))}
                   </select>
@@ -354,7 +354,7 @@ export default function PipelinePage({
               </div>
               {message && <p role="status">{message}</p>}
               <p>
-                保存不会改动正在运行的任务。到任务工作台创建任务，生成样片并确认后再进行完整处理。
+                保存不会改动正在运行的任务。新任务下载完成并通过完整性校验后自动按所选预设处理，样片检查可选；发布仍需通过样片确认等专用预检。
               </p>
             </div>
           </fieldset>

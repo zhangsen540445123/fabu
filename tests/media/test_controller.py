@@ -43,7 +43,7 @@ def test_controller_serializes_jobs_and_previews(context, monkeypatch):
     )
     controller.start()
     try:
-        wait_for(lambda: store.get(job.id).state == "PAUSED")
+        wait_for(lambda: store.get(job.id).state == "READY")
         paused = store.get(job.id)
         operation = controller.enqueue_preview(paused, [(0, 500)])
         with pytest.raises(ValueError):
@@ -134,7 +134,7 @@ def test_cancel_does_not_use_a_stale_public_status_snapshot(tmp_path, monkeypatc
 
 
 @pytest.mark.media
-def test_api_preview_to_approved_output_with_real_media(context, media_tools):
+def test_api_auto_output_then_optional_preview_with_real_media(context, media_tools):
     from fastapi.testclient import TestClient
 
     from fabu.api.app import create_app
@@ -154,7 +154,9 @@ def test_api_preview_to_approved_output_with_real_media(context, media_tools):
             },
         )
         headers = {"Origin": base, "X-CSRF-Token": session.json()["csrf_token"]}
-        wait_for(lambda: store.get(job.id).state == "PAUSED")
+        wait_for(lambda: store.get(job.id).state == "READY")
+        assert client.get(f"/api/jobs/{job.id}/output").status_code == 200
+        original_output = store.get(job.id).output_manifest
         paused = client.get(f"/api/jobs/{job.id}").json()
         created = client.post(
             "/api/previews",
@@ -181,13 +183,8 @@ def test_api_preview_to_approved_output_with_real_media(context, media_tools):
             client.post(f"/api/previews/{preview_id}/approve", headers=headers, json={}).status_code
             == 200
         )
-        resumed = client.post(
-            f"/api/jobs/{job.id}/resume",
-            headers=headers,
-            json={"expected_revision": store.get(job.id).revision},
-        )
-        assert resumed.status_code == 200, resumed.text
-        wait_for(lambda: store.get(job.id).state == "READY")
+        assert store.get(job.id).state == "READY"
+        assert store.get(job.id).output_manifest == original_output
         output = client.get(f"/api/jobs/{job.id}/output")
         assert output.status_code == 200
         assert "attachment" in output.headers["content-disposition"]

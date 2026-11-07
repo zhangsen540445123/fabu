@@ -26,7 +26,7 @@ const states: Record<string, string> = {
   COMPLETED: "提交处理完成",
 };
 const reasons: Record<string, string> = {
-  preview_required: "等待你检查样片并确认预设",
+  preview_required: "旧版样片暂停：可点击继续按所选预设处理，无需样片确认",
   source_unavailable: "下载未完成，请检查网络、访问权限与下载工具配置",
   source_authentication_required:
     "YouTube要求登录验证；请在Chrome中登录或完成验证，再手动重试。登录态不保证能解决所有访问限制",
@@ -179,7 +179,7 @@ function JobDetail({
                 应用为新内容版本
               </button>
               <p>
-                不会修改已经开始提交的内容。修改后重新检查素材与预设确认状态。
+                不会修改已经开始提交的内容。修改后重新检查素材与处理计划，本地处理无需样片确认；发布仍保留专用预检。
               </p>
               {error && (
                 <p role="alert" className="error">
@@ -192,8 +192,11 @@ function JobDetail({
           ["READY", "PAUSED", "PUBLISHING", "COMPLETED", "CANCELED"].includes(
             job.state,
           ) && <PublishForm job={job} refresh={refresh} />}
-        {plan && job.state === "PAUSED" && !job.output_manifest && (
-          <PreviewPanel job={job} refresh={refresh} />
+        {plan && ["PAUSED", "READY"].includes(job.state) && (
+          <details open={job.state === "PAUSED"}>
+            <summary>可选样片检查</summary>
+            <PreviewPanel job={job} refresh={refresh} />
+          </details>
         )}
       </section>
     </div>
@@ -247,7 +250,7 @@ export default function JobsPage({
         <div>
           <span className="eyebrow">WORKSPACE / 工作台</span>
           <h1>每条视频，都有迹可循。</h1>
-          <p>从下载、样片确认到本地成片，让重复操作按预设执行。</p>
+          <p>从下载、完整性校验到预设处理，自动生成本地成片；样片检查可选。</p>
         </div>
         <button className="primary" onClick={() => setEditing(true)}>
           新建任务 <span aria-hidden="true">＋</span>
@@ -351,7 +354,7 @@ export default function JobsPage({
                         {states[job.state] ?? job.state}
                       </span>
                       {job.pause_reason === "preview_required" && (
-                        <small>等待样片确认</small>
+                        <small>可继续处理，无需样片确认</small>
                       )}
                       {status?.job_id === job.id && status.percent != null && (
                         <div>
@@ -385,7 +388,6 @@ export default function JobsPage({
                           查看
                         </button>
                         {["PAUSED", "FAILED"].includes(job.state) &&
-                          job.pause_reason !== "preview_required" &&
                           !job.output_manifest && (
                             <button
                               className="quiet"

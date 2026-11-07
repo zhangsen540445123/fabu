@@ -57,4 +57,4 @@
 - 合成 Cookie 的 Python 请求响应、DPAPI、ACL、取消/异常清理、来源绑定与域范围已测试。
 - 已测试真实 Windows `.bat -> 隔离 Python -> Native Messaging` 启动及 EOF 退出，未读取实际浏览器数据。
 - 扩展使用模拟 Chrome API 运行权限与生命周期测试；这不代替真实 Chrome 验证。
-- 真实视频下载仍待扩展安装/启用后验证，不因上述自动化测试通过而标记成功。
+- 2026-11-07 13:53，用户启用后，当前生产任务VbDUeWoESMY完成真实下载及哈希/音轨/时长/分段解码检查。当前任务通过，未来访问限制仍可能要求人工登录验证。详见 download-verification.md。

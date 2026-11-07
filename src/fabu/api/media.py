@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from fabu.assets import assert_no_reparse, sha256_file
-from fabu.media.service import load_job_plan, require_approved_job_output
+from fabu.media.service import load_job_plan, require_verified_job_output
 from fabu.store import FrozenContent, InvalidTransition, StaleRevision
 
 router = APIRouter(prefix="/api")
@@ -201,7 +201,7 @@ def get_plan(job_id: str, request: Request):
 def output(job_id: str, request: Request):
     try:
         job = request.app.state.store.get(job_id)
-        manifest = require_approved_job_output(
+        manifest = require_verified_job_output(
             request.app.state.store, request.app.state.presets, request.app.state.approvals, job
         )
         return _media_file(
@@ -214,7 +214,7 @@ def output(job_id: str, request: Request):
     except KeyError as exc:
         raise HTTPException(404, "Task not found") from exc
     except (ValueError, OSError) as exc:
-        raise HTTPException(409, "成片未就绪、未确认或完整性检查失败") from exc
+        raise HTTPException(409, "成片未就绪或完整性/处理计划检查失败") from exc
 
 
 @router.post("/jobs/{job_id}/resume")

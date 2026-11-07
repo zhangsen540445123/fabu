@@ -3,27 +3,21 @@ import pytest
 
 @pytest.mark.media
 def test_unapproved_output_cannot_enter_publish(context):
-    from fabu.media.service import ProcessingPaused
-
     service, store, _, _, _, job, _ = context
-    claimed = store.claim_next("test-worker")
-    with pytest.raises(ProcessingPaused, match="preview_required"):
-        service.process_job(claimed)
-    paused = store.get(job.id)
-    assert paused.state == "PAUSED" and paused.pause_reason == "preview_required"
+    service.process_job(store.claim_next("test-worker"))
+    ready = store.get(job.id)
+    assert ready.state == "READY" and ready.pause_reason is None
     assert service.get_plan(job.id).preset_digest
-    with pytest.raises(ValueError):
-        service.require_approved_output(paused)
+    with pytest.raises(ValueError, match="preview approval"):
+        service.require_approved_output(ready)
 
 
 @pytest.mark.media
 def test_approved_processing_reuses_source_and_freezes_version(context, media_tools, tmp_path):
     from fabu.media.preview import build_preview
-    from fabu.media.service import ProcessingPaused
 
     service, store, presets, approvals, preset, job, calls = context
-    with pytest.raises(ProcessingPaused):
-        service.process_job(store.claim_next("test-worker"))
+    service.process_job(store.claim_next("test-worker"))
     preview = build_preview(
         service.get_plan(job.id), [(0, 500)], workspace=tmp_path / "previews", tools=media_tools
     )
@@ -32,7 +26,8 @@ def test_approved_processing_reuses_source_and_freezes_version(context, media_to
     presets.save_draft(
         preset.preset_id, {"name": "new global draft", "steps": [], "output": {"crf": 19}}
     )
-    paused = store.get(job.id)
+    ready = store.get(job.id)
+    paused = store.transition(job.id, ready.revision, "PAUSED", "manual")
     store.transition(job.id, paused.revision, "NEW", None)
     manifest = service.process_job(store.claim_next("test-worker"))
     ready = store.get(job.id)
@@ -78,19 +73,7 @@ def test_new_source_out_of_range_pauses(context):
 
 @pytest.mark.media
 def test_verified_output_cache_reused_on_resume(context, media_tools, tmp_path, monkeypatch):
-    from fabu.media.preview import build_preview
-    from fabu.media.service import ProcessingPaused
-
-    service, store, _, approvals, preset, job, calls = context
-    with pytest.raises(ProcessingPaused):
-        service.process_job(store.claim_next("test-worker"))
-    preview = build_preview(
-        service.get_plan(job.id), [(0, 500)], workspace=tmp_path / "previews", tools=media_tools
-    )
-    approvals.record_preview(preview, preset.id)
-    approvals.approve_preview(preview.id)
-    paused = store.get(job.id)
-    store.transition(job.id, paused.revision, "NEW", None)
+    service, store, _, _, _, job, calls = context
     first = service.process_job(store.claim_next("test-worker"))
     ready = store.get(job.id)
     paused = store.transition(job.id, ready.revision, "PAUSED", "manual")

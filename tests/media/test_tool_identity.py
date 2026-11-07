@@ -43,11 +43,9 @@ def test_bound_plan_cannot_render_with_different_tools(tmp_path):
 def test_real_preview_approval_is_bound_to_tool_fingerprint(context, monkeypatch):
     from fabu.media.models import compatibility_version
     from fabu.media.preview import build_preview
-    from fabu.media.service import ProcessingPaused
 
     service, store, assets, approvals, preset, job, calls = context
-    with pytest.raises(ProcessingPaused):
-        service.process_job(store.claim_next("test-worker"))
+    service.process_job(store.claim_next("test-worker"))
     plan = service.get_plan(job.id)
     assert plan.tool_identity == service.tools.identity()
     manifest = build_preview(
@@ -64,11 +62,9 @@ def test_real_preview_approval_is_bound_to_tool_fingerprint(context, monkeypatch
 def test_current_tool_change_invalidates_same_saved_approval(context):
     from fabu.media.models import compatibility_version
     from fabu.media.preview import build_preview
-    from fabu.media.service import ProcessingPaused
 
     service, store, assets, approvals, preset, job, _ = context
-    with pytest.raises(ProcessingPaused):
-        service.process_job(store.claim_next("test-worker"))
+    service.process_job(store.claim_next("test-worker"))
     plan = service.get_plan(job.id)
     approvals.current_tools = service.tools.identity
     preview = build_preview(

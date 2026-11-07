@@ -124,14 +124,10 @@ export default function NewJobPage({
             </select>
           </label>
           <div className="preset-note">
-            <strong>
-              {selected?.approved
-                ? "预设已确认，可自动处理"
-                : "首次使用或参数变化时，将暂停等待样片确认"}
-            </strong>
+            <strong>下载完成并通过完整性校验后，自动按所选预设处理。</strong>
             <p>
               基础输出 HEVC · CRF{String(selected?.version.output.crf ?? 20)} ·
-              30fps。标题只用于发布内容，不改变处理预设。
+              30fps。标题只用于发布内容，不改变处理预设。样片检查可选，不影响本地成片生成。
             </p>
           </div>
           <label>
@@ -172,7 +168,7 @@ export default function NewJobPage({
                 </label>
               )}
               <p className="preset-note">
-                成片验证完成后自动进入发布仿真，使用此模板的账号与来源声明，无需再点击发布。仿真不上传、不扣次；首次预设仍需样片确认。
+                成片验证完成后自动进入发布仿真流程；发布仿真仍需通过样片确认等发布专用预检。使用此模板的账号与来源声明，无需再点击发布。仿真不上传、不扣次；真实发布权限与安全限制不变。
               </p>
             </>
           ) : (

@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   approvePreview: vi.fn(),
   resumeJob: vi.fn(),
   createJob: vi.fn(),
+  getPublicationProfiles: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -95,12 +96,16 @@ beforeEach(() => {
     },
   );
   api.getJobPreviews.mockResolvedValue([]);
+  api.getPublicationProfiles.mockResolvedValue([]);
 });
 it("base_preset_preserves_audio_and_frame", async () => {
   const { default: PipelinePage } = await import("../pages/PipelinePage");
   render(<PipelinePage />);
   expect(await screen.findByText("附加处理全部关闭")).toBeVisible();
   expect(screen.getByText(/CRF20/)).toBeVisible();
+  expect(screen.getByText(/完整性校验后自动按所选预设处理/)).toHaveTextContent(
+    "样片检查可选",
+  );
   expect(api.approvePreview).not.toHaveBeenCalled();
 });
 it("toggle_reorder_save_and_confirm", async () => {
@@ -123,7 +128,10 @@ it("toggle_reorder_save_and_confirm", async () => {
   });
   fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
   await waitFor(() => expect(api.savePreset).toHaveBeenCalled());
-  expect(await screen.findByText(/版本 2 已保存/)).toBeVisible();
+  expect(await screen.findByText(/版本 2 已保存/)).toHaveTextContent(
+    "样片检查可选",
+  );
+  expect(screen.queryByText(/需要使用样片重新确认/)).not.toBeInTheDocument();
   expect(api.approvePreview).not.toHaveBeenCalled();
 });
 it("preview_confirmation_requires_explicit_user_checkbox", async () => {
@@ -181,6 +189,9 @@ it("topics_do_not_select_media_preset", async () => {
       onClose={() => {}}
       onSaved={async () => {}}
     />,
+  );
+  await waitFor(() =>
+    expect(api.getPublicationProfiles).toHaveBeenCalledOnce(),
   );
   fireEvent.change(screen.getByLabelText("处理预设"), {
     target: { value: "v-alt" },
@@ -255,4 +266,187 @@ it("does not show the previous content plan while a new revision is being inspec
   await waitFor(() =>
     expect(screen.queryByText(/计划 oldplan/)).not.toBeInTheDocument(),
   );
+});
+
+const ready = {
+  ...paused,
+  state: "READY",
+  pause_reason: null,
+  output_manifest: { sha256: "verified" },
+};
+function mockReadyPreview() {
+  api.createPreview.mockResolvedValue({ id: "op-ready", state: "QUEUED" });
+  api.getOperation.mockResolvedValue({
+    id: "op-ready",
+    state: "SUCCEEDED",
+    result: { preview_id: "preview-ready" },
+  });
+  api.getPreview.mockResolvedValue({
+    id: "preview-ready",
+    approved: false,
+    clips: [
+      {
+        index: 0,
+        start_ms: 0,
+        end_ms: 500,
+        proxy_label: "观看代理",
+        proxy_url: "/ready-proxy",
+        official_url: "/ready-official",
+      },
+    ],
+  });
+}
+
+it("records explicit optional READY approval without resuming or re-rendering the job", async () => {
+  const { default: PreviewPanel } = await import("../components/PreviewPanel");
+  mockReadyPreview();
+  api.approvePreview.mockResolvedValue({ preview_id: "preview-ready" });
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  render(<PreviewPanel job={ready} refresh={refresh} />);
+  fireEvent.click(screen.getByRole("button", { name: "生成样片" }));
+  expect(
+    await screen.findByRole("link", { name: "下载正式HEVC样片" }),
+  ).toHaveAttribute("href", "/ready-official");
+  expect(document.querySelector("video")).toHaveAttribute(
+    "src",
+    "/ready-proxy",
+  );
+  expect(api.createPreview).toHaveBeenCalledExactlyOnceWith(ready, undefined);
+  const confirm = screen.getByRole("button", { name: "确认样片" });
+  expect(confirm).toBeDisabled();
+  expect(api.approvePreview).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("checkbox", { name: /我已检查正式样片/ }));
+  expect(confirm).toBeEnabled();
+  fireEvent.click(confirm);
+  expect(
+    await screen.findByRole("button", { name: "样片已确认" }),
+  ).toBeDisabled();
+  expect(api.approvePreview).toHaveBeenCalledExactlyOnceWith("preview-ready");
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(api.resumeJob).not.toHaveBeenCalled();
+  expect(api.createPreview).toHaveBeenCalledOnce();
+});
+
+it("does not fabricate approval when optional READY confirmation fails", async () => {
+  const { default: PreviewPanel } = await import("../components/PreviewPanel");
+  mockReadyPreview();
+  api.approvePreview.mockRejectedValue(new Error("预览已过期或素材发生变化"));
+  const refresh = vi.fn();
+  render(<PreviewPanel job={ready} refresh={refresh} />);
+  fireEvent.click(screen.getByRole("button", { name: "生成样片" }));
+  await screen.findByRole("link", { name: "下载正式HEVC样片" });
+  fireEvent.click(screen.getByRole("checkbox", { name: /我已检查正式样片/ }));
+  fireEvent.click(screen.getByRole("button", { name: "确认样片" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "预览已过期或素材发生变化",
+  );
+  expect(
+    screen.queryByRole("button", { name: "样片已确认" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "确认样片" })).toBeEnabled();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(api.resumeJob).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "offers automatic local processing with preset approved=%s",
+  async (approved) => {
+    const { default: NewJobPage } = await import("../pages/NewJobPage");
+    render(
+      <NewJobPage
+        presets={[{ version: base, approved }]}
+        defaultPreset="v1"
+        onClose={() => {}}
+        onSaved={async () => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(api.getPublicationProfiles).toHaveBeenCalledOnce(),
+    );
+    expect(screen.getByText(/完整性校验后.*自动按所选预设处理/)).toBeVisible();
+    expect(screen.getByText(/样片检查可选/)).toBeVisible();
+    expect(screen.queryByText(/将暂停等待样片确认/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存本地任务" })).toBeEnabled();
+    await waitFor(() =>
+      expect(api.getPublicationProfiles).toHaveBeenCalledOnce(),
+    );
+    expect(api.approvePreview).not.toHaveBeenCalled();
+  },
+);
+
+it("distinguishes automatic local processing from publishing-specific approval checks", async () => {
+  const { default: NewJobPage } = await import("../pages/NewJobPage");
+  api.getPublicationProfiles.mockResolvedValue([
+    {
+      id: "profile",
+      name: "日常",
+      scope: "simulation",
+      can_run: true,
+      accounts: [],
+    },
+  ]);
+  render(
+    <NewJobPage
+      presets={[{ version: base, approved: false }]}
+      defaultPreset="v1"
+      onClose={() => {}}
+      onSaved={async () => {}}
+    />,
+  );
+  await screen.findByRole("option", { name: "日常 · 仿真" });
+  fireEvent.change(screen.getByLabelText("发布流程模板"), {
+    target: { value: "profile" },
+  });
+  expect(
+    screen.getByText(/发布仿真仍需通过样片确认等发布专用预检/),
+  ).toHaveTextContent("仿真不上传、不扣次");
+  expect(
+    screen.getByText(/发布仿真仍需通过样片确认等发布专用预检/),
+  ).toHaveTextContent("真实发布权限与安全限制不变");
+  expect(screen.queryByText(/首次预设仍需样片确认/)).not.toBeInTheDocument();
+  expect(api.approvePreview).not.toHaveBeenCalled();
+});
+
+it("confirms a paused publishing snapshot without resuming local rendering", async () => {
+  const { default: PreviewPanel } = await import("../components/PreviewPanel");
+  mockReadyPreview();
+  api.approvePreview.mockResolvedValue({ preview_id: "preview-ready" });
+  render(
+    <PreviewPanel
+      job={{
+        ...ready,
+        state: "PAUSED",
+        pause_reason: "workflow_preflight_failed",
+      }}
+      refresh={async () => {}}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "生成样片" }));
+  await screen.findByRole("link", { name: "下载正式HEVC样片" });
+  fireEvent.click(screen.getByRole("checkbox", { name: /我已检查正式样片/ }));
+  fireEvent.click(screen.getByRole("button", { name: "确认样片" }));
+  expect(
+    await screen.findByRole("button", { name: "样片已确认" }),
+  ).toBeDisabled();
+  expect(api.resumeJob).not.toHaveBeenCalled();
+});
+
+it("keeps preview generation and approval disabled for frozen READY content", async () => {
+  const { default: PreviewPanel } = await import("../components/PreviewPanel");
+  mockReadyPreview();
+  api.getJobPreviews.mockResolvedValue([
+    { id: "op-ready", state: "SUCCEEDED" },
+  ]);
+  render(
+    <PreviewPanel
+      job={{ ...ready, content_frozen: true }}
+      refresh={async () => {}}
+    />,
+  );
+  await screen.findByRole("link", { name: "下载正式HEVC样片" });
+  fireEvent.click(screen.getByRole("checkbox", { name: /我已检查正式样片/ }));
+  expect(screen.getByRole("button", { name: "生成样片" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "确认样片" })).toBeDisabled();
+  expect(api.approvePreview).not.toHaveBeenCalled();
+  expect(api.resumeJob).not.toHaveBeenCalled();
 });

@@ -7,6 +7,13 @@ const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
   getCapabilities: vi.fn(),
   getPresets: vi.fn(),
+  getJobPlan: vi.fn(),
+  getJobPreviews: vi.fn(),
+  getAccounts: vi.fn(),
+  getTargetStatus: vi.fn(),
+  getPublicationProfiles: vi.fn(),
+  createPreview: vi.fn(),
+  approvePreview: vi.fn(),
   getMediaStatus: vi.fn(),
   createJob: vi.fn(),
   resumeJob: vi.fn(),
@@ -52,6 +59,26 @@ const job = {
 beforeEach(() => {
   vi.resetAllMocks();
   api.initializeSession.mockResolvedValue(undefined);
+  api.getJobPlan.mockResolvedValue({
+    digest: "plan1234567890abcdef",
+    output_size: { width: 2560, height: 1440 },
+    duration_ms: 500,
+    preset: { id: "preset-1", name: "基础2K", revision: 1 },
+    source_manifest: {},
+  });
+  api.getJobPreviews.mockResolvedValue([]);
+  api.getAccounts.mockResolvedValue({
+    scope: "simulation",
+    live_enabled: false,
+    accounts: [],
+    topic_groups: [],
+  });
+  api.getTargetStatus.mockResolvedValue({
+    state: "NOT_PREPARED",
+    targets: [],
+    can_submit: false,
+  });
+  api.getPublicationProfiles.mockResolvedValue([]);
   api.getJobs.mockResolvedValue([]);
   api.getSettings.mockResolvedValue(settings);
   api.getPresets.mockResolvedValue([
@@ -83,6 +110,58 @@ beforeEach(() => {
 });
 
 describe("local dashboard", () => {
+  it("resumes a legacy preview pause only through the explicit Continue action", async () => {
+    const { default: App } = await import("../App");
+    const legacy = {
+      ...job,
+      state: "PAUSED",
+      pause_reason: "preview_required",
+    };
+    api.getJobs.mockResolvedValue([legacy]);
+    api.resumeJob.mockResolvedValue({ ...legacy, state: "NEW", revision: 2 });
+    render(<App />);
+    const resume = await screen.findByRole("button", {
+      name: "继续",
+    });
+    expect(resume).toBeEnabled();
+    expect(screen.queryByText("等待样片确认")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: job.spec.title }));
+    expect(await screen.findByText(/旧版样片暂停/)).toHaveTextContent(
+      "无需样片确认",
+    );
+    expect(api.resumeJob).not.toHaveBeenCalled();
+    fireEvent.click(resume);
+    await waitFor(() =>
+      expect(api.resumeJob).toHaveBeenCalledExactlyOnceWith(legacy),
+    );
+    expect(api.createPreview).not.toHaveBeenCalled();
+    expect(api.approvePreview).not.toHaveBeenCalled();
+  });
+
+  it("offers verified READY output before optional review without granting publishing permission", async () => {
+    const { default: App } = await import("../App");
+    api.getJobs.mockResolvedValue([
+      { ...job, state: "READY", output_manifest: { sha256: "verified" } },
+    ]);
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: job.spec.title }),
+    );
+    expect(
+      await screen.findByRole("link", { name: "下载已验证成片" }),
+    ).toHaveAttribute("href", "/api/jobs/job-1/output");
+    const summary = await screen.findByText("可选样片检查");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    // jsdom does not toggle details on summary clicks; set the browser-owned open state.
+    summary.closest("details")!.open = true;
+    expect(screen.getByRole("button", { name: "生成样片" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "立即发布" })).toBeDisabled();
+    expect(screen.getByText("仅本地仿真 · 真实发布未解锁")).toBeVisible();
+    expect(api.createPreview).not.toHaveBeenCalled();
+    expect(api.approvePreview).not.toHaveBeenCalled();
+    expect(api.resumeJob).not.toHaveBeenCalled();
+  });
+
   it("explains source login verification without implying automatic authentication", async () => {
     const { default: App } = await import("../App");
     api.getJobs.mockResolvedValue([
@@ -108,10 +187,20 @@ describe("local dashboard", () => {
 
   it("explains the Chrome helper connection without automatically retrying", async () => {
     const { default: App } = await import("../App");
-    api.getJobs.mockResolvedValue([{ ...job, state: "PAUSED", pause_reason: "source_browser_session_required" }]);
+    api.getJobs.mockResolvedValue([
+      {
+        ...job,
+        state: "PAUSED",
+        pause_reason: "source_browser_session_required",
+      },
+    ]);
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: job.spec.title }));
-    expect(await screen.findByText(/Fabu.*YouTube.*助手/)).toHaveTextContent("手动重试");
+    fireEvent.click(
+      await screen.findByRole("button", { name: job.spec.title }),
+    );
+    expect(await screen.findByText(/Fabu.*YouTube.*助手/)).toHaveTextContent(
+      "手动重试",
+    );
     expect(api.resumeJob).not.toHaveBeenCalled();
   });
 
@@ -168,6 +257,8 @@ describe("local dashboard", () => {
     render(<App />);
     await screen.findByText("发布未解锁");
     expect(screen.getByText(/处理引擎未启动/)).toBeVisible();
+    expect(screen.getByText(/下载、完整性校验到预设处理/)).toBeVisible();
+    expect(screen.queryByText(/从下载、样片确认/)).not.toBeInTheDocument();
   });
   it("shows actual paths in settings", async () => {
     const { default: App } = await import("../App");
