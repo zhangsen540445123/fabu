@@ -25,6 +25,7 @@ class MediaController:
     ):
         self.startup_cleanup = startup_cleanup
         self.publication_queue = None
+        self.publication_profiles = None
         self.store, self.service_factory, self.preview_root = store, service_factory, preview_root
         self._lock = threading.Lock()
         self._wake = threading.Event()
@@ -236,6 +237,10 @@ class MediaController:
                         self._cancel = threading.Event()
                     if self.publication_queue and self.publication_queue.process_next(
                         worker, self._cancel, self._set
+                    ):
+                        continue
+                    if self.publication_profiles and self.publication_profiles.process_ready(
+                        worker, self._cancel
                     ):
                         continue
                     try:

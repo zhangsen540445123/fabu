@@ -21,7 +21,14 @@ def list_jobs(request: Request):
 
 
 def _validate_spec(spec: JobSpec, request: Request):
-    if spec.publish_mode not in {"local", "simulation"}:
+    if spec.publication_profile_id:
+        try:
+            request.app.state.publication_profiles.validate_spec(spec)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(
+                409, "Workflow profile is invalid or live publishing is disabled"
+            ) from exc
+    elif spec.publish_mode not in {"local", "simulation"}:
         raise HTTPException(409, "Real publishing is not verified or enabled")
     try:
         parse_youtube_url(spec.source_url)

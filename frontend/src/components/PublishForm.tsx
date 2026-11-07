@@ -6,6 +6,7 @@ import {
   preflightPublication,
   reconcilePublication,
   submitPublication,
+  savePublicationProfile,
   type AccountCatalogue,
   type Job,
   type PublishRun,
@@ -20,6 +21,8 @@ export default function PublishForm({
   job: Job;
   refresh: () => Promise<void>;
 }) {
+  const [profileName, setProfileName] = useState("日常助眠"),
+    [profileMessage, setProfileMessage] = useState("");
   const [scope, setScope] = useState<"simulation" | "live">("simulation");
   const [catalog, setCatalog] = useState<AccountCatalogue | null>(null),
     [selected, setSelected] = useState<string[]>([]),
@@ -131,6 +134,18 @@ export default function PublishForm({
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "操作失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function saveProfile() {
+    setBusy(true);
+    setError("");
+    try {
+      await savePublicationProfile(job, profileName, scope);
+      setProfileMessage("流程模板已保存，新建任务时可选择并自动衔接。");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存失败");
     } finally {
       setBusy(false);
     }
@@ -266,6 +281,31 @@ export default function PublishForm({
           </fieldset>
         </form>
       )}
+      {run?.snapshot_digest &&
+        !job.content_frozen &&
+        !job.spec.publication_profile_id && (
+          <details>
+            <summary>保存为可复用发布流程模板</summary>
+            <label>
+              流程模板名称
+              <input
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+              />
+            </label>
+            <button
+              className="secondary"
+              disabled={busy || !profileName.trim()}
+              onClick={() => void saveProfile()}
+            >
+              保存流程模板
+            </button>
+            <p>
+              仅复用账号、话题规则和来源声明；不复用本视频的标题、封面或预约时间。
+            </p>
+            {profileMessage && <p role="status">{profileMessage}</p>}
+          </details>
+        )}
       {run?.topic && (
         <p>
           命中话题组：{run.topic.group_name} · {run.topic.tags.join("、")}

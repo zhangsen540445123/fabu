@@ -36,6 +36,7 @@ class JobSpec(BaseModel):
     source_url: str = Field(min_length=1, max_length=4096)
     title: str = Field(min_length=1, max_length=1000)
     preset_version_id: str = Field(min_length=1, max_length=100)
+    publication_profile_id: str | None = Field(default=None, min_length=1, max_length=100)
     target_ids: list[str] = Field(default_factory=list, max_length=3)
     publish_mode: Literal["local", "simulation", "immediate", "native_schedule"] = "local"
     scheduled_at_utc: datetime | None = None

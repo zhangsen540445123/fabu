@@ -30,6 +30,7 @@ from fabu.presets import PresetStore
 from fabu.publishing.capabilities import CapabilityReport
 from fabu.publishing.journal import SqliteUploadJournal
 from fabu.publishing.permits import PermitAuthority
+from fabu.publishing.profiles import PublicationProfiles
 from fabu.publishing.queue import PublicationQueue
 from fabu.publishing.reconcile import recover_publications
 from fabu.settings import Settings, check_environment
@@ -81,6 +82,7 @@ def create_app(
         SqliteUploadJournal.recover_interrupted(store)
         recover_publications(store)
         app.state.publication_queue.recover_interrupted()
+        app.state.publication_profiles.recover_interrupted()
 
     app.state.media_controller = MediaController(
         store,
@@ -96,6 +98,8 @@ def create_app(
         app.state.media_controller.wake,
     )
     app.state.media_controller.publication_queue = app.state.publication_queue
+    app.state.publication_profiles = PublicationProfiles(app)
+    app.state.media_controller.publication_profiles = app.state.publication_profiles
     app.state.capabilities = CapabilityReport(checked_at=datetime.now(UTC))
     with store.connection() as db:
         existing = db.execute(

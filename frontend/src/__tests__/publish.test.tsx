@@ -5,6 +5,8 @@ import TargetStatus from "../components/TargetStatus";
 import PublishForm from "../components/PublishForm";
 const api = vi.hoisted(() => ({
   getAccounts: vi.fn(),
+  getPublicationProfiles: vi.fn(),
+  createWorkflowJob: vi.fn(),
   getTargetStatus: vi.fn(),
   configurePublication: vi.fn(),
   preflightPublication: vi.fn(),
@@ -166,4 +168,65 @@ it("another task owning the source cannot be silently submitted again", async ()
   expect(
     screen.queryByRole("button", { name: "开始本地仿真" }),
   ).not.toBeInTheDocument();
+});
+import NewJobPage from "../pages/NewJobPage";
+it("new task selects reusable profile and native schedule without later publish click", async () => {
+  api.getPublicationProfiles.mockResolvedValue([
+    {
+      id: "profile",
+      name: "日常",
+      scope: "simulation",
+      can_run: true,
+      accounts: [],
+    },
+  ]);
+  api.createWorkflowJob.mockResolvedValue(job);
+  render(
+    <NewJobPage
+      presets={[
+        {
+          approved: true,
+          version: {
+            id: "preset",
+            preset_id: "p",
+            revision: 1,
+            name: "基础",
+            schema_version: 1,
+            steps: [],
+            output: {},
+          },
+        },
+      ]}
+      defaultPreset="preset"
+      onClose={() => {}}
+      onSaved={async () => {}}
+    />,
+  );
+  await screen.findByRole("option", { name: "日常 · 仿真" });
+  fireEvent.change(screen.getByLabelText("发布流程模板"), {
+    target: { value: "profile" },
+  });
+  fireEvent.change(screen.getByLabelText("YouTube链接"), {
+    target: { value: "https://youtu.be/Z6imSiJLd9Q" },
+  });
+  fireEvent.change(screen.getByLabelText("发布标题"), {
+    target: { value: "剃光头" },
+  });
+  // An available processing preset is required; check state serialization through the form.
+  expect(
+    screen.getByText(/成片验证完成后自动进入发布仿真/),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("执行模式"), {
+    target: { value: "native_schedule" },
+  });
+  fireEvent.change(screen.getByLabelText("流程预约北京时间"), {
+    target: { value: "2027-01-02T20:30" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "创建自动流程（仿真）" }));
+  await waitFor(() => expect(api.createWorkflowJob).toHaveBeenCalledOnce());
+  expect(api.createWorkflowJob.mock.calls[0][0]).toMatchObject({
+    profile_id: "profile",
+    mode: "native_schedule",
+    scheduled_at_utc: "2027-01-02T12:30:00.000Z",
+  });
 });

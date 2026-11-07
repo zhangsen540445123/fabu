@@ -91,6 +91,8 @@ with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
         def prepare(self, snapshot, permit):
             if "恢复验收" in snapshot.title:
                 self.outcomes = deque(["UNKNOWN"])
+            elif "自动验收" in snapshot.title:
+                self.outcomes = deque()
             return super().prepare(snapshot, permit)
 
     app.state.publication_queue.publisher_factory = lambda authority, cancel: ScenarioPublisher(

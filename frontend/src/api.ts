@@ -1,4 +1,5 @@
 export interface JobSpec {
+  publication_profile_id?: string | null;
   source_url: string;
   title: string;
   preset_version_id: string;
@@ -360,3 +361,39 @@ export const savePublishingConnection = (data: {
   });
 export const refreshPublishingAccounts = () =>
   request<{ refreshed: number }>("/api/accounts/refresh", { method: "POST" });
+export interface PublicationProfile {
+  id: string;
+  name: string;
+  scope: "simulation" | "live";
+  can_run: boolean;
+  accounts: PublishAccount[];
+  topic_override: string | null;
+}
+export const getPublicationProfiles = () =>
+  request<PublicationProfile[]>("/api/publish/profiles");
+export const savePublicationProfile = (
+  job: Job,
+  name: string,
+  scope: "simulation" | "live",
+) =>
+  request<PublicationProfile>("/api/publish/profiles", {
+    method: "POST",
+    body: JSON.stringify({
+      job_id: job.id,
+      expected_revision: job.revision,
+      name,
+      scope,
+    }),
+  });
+export const createWorkflowJob = (data: {
+  source_url: string;
+  title: string;
+  preset_version_id: string;
+  profile_id: string;
+  mode: "immediate" | "native_schedule";
+  scheduled_at_utc?: string;
+}) =>
+  request<Job>("/api/workflow/jobs", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });

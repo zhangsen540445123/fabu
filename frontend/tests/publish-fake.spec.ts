@@ -81,6 +81,12 @@ test("three-platform simulation keeps partial receipts after refresh and never s
   await page.getByLabel("发布方式").selectOption("immediate");
   await page.getByRole("button", { name: "保存配置并预检" }).click();
   await expect(page.getByText(/平台预约：/)).not.toBeVisible();
+  await page.getByText("保存为可复用发布流程模板", { exact: true }).click();
+  await page.getByLabel("流程模板名称").fill("日常发布模板");
+  await page.getByRole("button", { name: "保存流程模板", exact: true }).click();
+  await expect(
+    page.getByText("流程模板已保存，新建任务时可选择并自动衔接。"),
+  ).toBeVisible();
   await page.getByRole("button", { name: "开始本地仿真", exact: true }).click();
   await expect(page.getByText("平台已提交", { exact: true })).toBeVisible({
     timeout: 10000,
@@ -108,6 +114,29 @@ test("three-platform simulation keeps partial receipts after refresh and never s
   ).toBe(true);
   await page.screenshot({
     path: "test-results/publish-mobile.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1440, height: 1080 });
+  await page.getByRole("button", { name: "关闭任务详情" }).click();
+  await page.getByRole("button", { name: "新建任务", exact: true }).click();
+  await page.getByLabel("YouTube链接").fill("https://youtu.be/Y6imSiJLd9Q");
+  await page.getByLabel("发布标题").fill("剃光头 · 自动验收");
+  await page
+    .getByLabel("发布流程模板")
+    .selectOption({ label: "日常发布模板 · 仿真" });
+  await page
+    .getByRole("button", { name: "创建自动流程（仿真）", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "剃光头 · 自动验收", exact: true })
+    .click();
+  // No post-render preflight or publish click: the approved preset and profile auto-chain.
+  await expect(page.getByText("平台已提交", { exact: true })).toHaveCount(3, {
+    timeout: 25000,
+  });
+  await expect(page.getByText(/2aZjVP8u/)).toBeVisible();
+  await page.screenshot({
+    path: "test-results/workflow-automatic.png",
     fullPage: true,
   });
   expect(external).toEqual([]);

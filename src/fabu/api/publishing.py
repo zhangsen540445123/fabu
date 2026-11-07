@@ -11,6 +11,7 @@ from fabu.publishing.connection import (
     save_connection,
 )
 from fabu.publishing.coordinator import PublicationCoordinator
+from fabu.publishing.profiles import ProfileRequest, WorkflowRequest
 from fabu.publishing.service import (
     DraftRequest,
     Scope,
@@ -180,4 +181,27 @@ def refresh_connection_accounts(request: Request):
     except (ValueError, KeyError, RuntimeError, OSError) as exc:
         raise HTTPException(
             409, "只读同步未完成；请检查官方CLI路径、密钥、客户端ID与网络。发布仍保持禁用。"
+        ) from exc
+
+
+@router.get("/publish/profiles")
+def get_profiles(request: Request):
+    return request.app.state.publication_profiles.list()
+
+
+@router.post("/publish/profiles", status_code=201)
+def save_profile(command: ProfileRequest, request: Request):
+    try:
+        return request.app.state.publication_profiles.save(command)
+    except (ValueError, KeyError) as exc:
+        raise conflict(exc) from exc
+
+
+@router.post("/workflow/jobs", status_code=201)
+def create_workflow(command: WorkflowRequest, request: Request):
+    try:
+        return request.app.state.publication_profiles.create(command)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(
+            409, "流程条件不满足：核对模板、账号、话题、时间；真实自动发布尚未解锁"
         ) from exc

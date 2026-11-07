@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { createJob, type PresetSummary } from "../api";
+import { useState, useEffect } from "react";
+import {
+  createJob,
+  createWorkflowJob,
+  getPublicationProfiles,
+  type PublicationProfile,
+  type PresetSummary,
+} from "../api";
+import { beijingToUtc } from "../publishing-time";
 export default function NewJobPage({
   presets,
   defaultPreset,
@@ -20,19 +27,46 @@ export default function NewJobPage({
     ),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [profiles, setProfiles] = useState<PublicationProfile[]>([]),
+    [profile, setProfile] = useState(""),
+    [mode, setMode] = useState<"immediate" | "native_schedule">("immediate"),
+    [wall, setWall] = useState("");
+  useEffect(() => {
+    let alive = true;
+    getPublicationProfiles()
+      .then((v) => {
+        if (alive) setProfiles(v);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
   const selected = presets.find((p) => p.version.id === version);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      await createJob({
-        source_url: url,
-        title,
-        preset_version_id: version,
-        target_ids: [],
-        publish_mode: "local",
-      });
+      if (profile)
+        await createWorkflowJob({
+          source_url: url,
+          title,
+          preset_version_id: version,
+          profile_id: profile,
+          mode,
+          ...(mode === "native_schedule"
+            ? { scheduled_at_utc: beijingToUtc(wall) }
+            : {}),
+        });
+      else
+        await createJob({
+          source_url: url,
+          title,
+          preset_version_id: version,
+          target_ids: [],
+          publish_mode: "local",
+        });
       await onSaved();
       onClose();
     } catch (e) {
@@ -101,13 +135,54 @@ export default function NewJobPage({
             </p>
           </div>
           <label>
-            执行模式
-            <select value="local" disabled>
-              <option value="local">仅本地处理</option>
-              <option disabled>立即发布（未解锁）</option>
-              <option disabled>平台原生定时（未解锁）</option>
+            发布流程模板
+            <select
+              value={profile}
+              onChange={(e) => setProfile(e.target.value)}
+            >
+              <option value="">不使用发布模板 · 仅本地处理</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id} disabled={!p.can_run}>
+                  {p.name} · {p.scope === "simulation" ? "仿真" : "真实未解锁"}
+                </option>
+              ))}
             </select>
           </label>
+          {profile ? (
+            <>
+              <label>
+                执行模式
+                <select
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value as typeof mode)}
+                >
+                  <option value="immediate">自动立即发布（仿真）</option>
+                  <option value="native_schedule">自动平台定时（仿真）</option>
+                </select>
+              </label>
+              {mode === "native_schedule" && (
+                <label>
+                  流程预约北京时间
+                  <input
+                    type="datetime-local"
+                    value={wall}
+                    onChange={(e) => setWall(e.target.value)}
+                    required
+                  />
+                </label>
+              )}
+              <p className="preset-note">
+                成片验证完成后自动进入发布仿真，使用此模板的账号与来源声明，无需再点击发布。仿真不上传、不扣次；首次预设仍需样片确认。
+              </p>
+            </>
+          ) : (
+            <label>
+              执行模式
+              <select value="local" disabled>
+                <option value="local">仅本地处理</option>
+              </select>
+            </label>
+          )}
           <p className="muted">使用原始YouTube封面；不自动上传或投稿。</p>
           {error && (
             <p className="error" role="alert">
@@ -115,7 +190,11 @@ export default function NewJobPage({
             </p>
           )}
           <button className="primary wide" disabled={busy || !version}>
-            {busy ? "保存中…" : "保存本地任务"}
+            {busy
+              ? "保存中…"
+              : profile
+                ? "创建自动流程（仿真）"
+                : "保存本地任务"}
           </button>
         </form>
       </section>

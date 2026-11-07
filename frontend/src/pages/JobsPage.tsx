@@ -35,6 +35,9 @@ const reasons: Record<string, string> = {
   processing_canceled: "处理已取消",
   interrupted_processing: "上次处理被中断，可从已验证阶段重新开始",
   user_canceled: "用户取消",
+  workflow_preflight_failed:
+    "自动发布预检未通过；检查媒体确认、账号、话题、预约时间或重复来源",
+  handoff_interrupted: "自动衔接被中断，请先查看发布状态",
   target_failed: "某平台提交失败，后续目标已停止",
   reconcile_required: "提交结果需要对账，不会盲目重投",
   publication_stage_failed: "发布阶段中断，请检查状态后再继续",
