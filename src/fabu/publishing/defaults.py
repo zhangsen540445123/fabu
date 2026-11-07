@@ -7,6 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from fabu.publishing.models import AccountPublishSettings, PublicationConfig
+from fabu.publishing.profile_identity import ordered_profiles, profile_key, row_key
 from fabu.publishing.service import AccountChoice, Scope, catalogue
 from fabu.publishing.topics import select_topic_group
 
@@ -59,12 +60,26 @@ def save_defaults(app, command):
     ):
         raise ValueError("Unknown topic override")
     config = PublicationConfig(accounts=tuple(settings), topic_override=command.topic_override)
-    identifier, now = str(uuid4()), datetime.now(UTC).isoformat()
+    now = datetime.now(UTC).isoformat()
+    name = "默认发布配置"
+    key = profile_key(name, command.scope, config)
     with app.state.store.transaction() as db:
-        db.execute(
-            "INSERT INTO publication_profiles VALUES (?,?,?,?,?)",
-            (identifier, "默认发布配置", command.scope, config.model_dump_json(), now),
+        # The write transaction serializes repeat saves (including concurrent clicks).
+        # Reuse an immutable snapshot, never rewrite one that old jobs may reference.
+        existing = next(
+            (
+                row
+                for row in ordered_profiles(db)
+                if row["name"] == name and row["scope"] == command.scope and row_key(row) == key
+            ),
+            None,
         )
+        identifier = existing["id"] if existing is not None else str(uuid4())
+        if existing is None:
+            db.execute(
+                "INSERT INTO publication_profiles VALUES (?,?,?,?,?)",
+                (identifier, name, command.scope, config.model_dump_json(), now),
+            )
         db.execute(
             "INSERT INTO publication_defaults VALUES (1,?,'immediate','user_configured_default',?) "
             "ON CONFLICT(singleton) DO UPDATE SET profile_id=excluded.profile_id, "

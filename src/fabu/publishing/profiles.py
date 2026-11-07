@@ -12,6 +12,7 @@ from fabu.media.models import OutputManifest
 from fabu.media.service import require_verified_job_output
 from fabu.media.source import parse_youtube_url
 from fabu.publishing.models import PublicationConfig
+from fabu.publishing.profile_identity import ordered_profiles, row_key
 from fabu.publishing.service import Scope, busy, catalogue, load_config
 from fabu.publishing.templates import build_publish_snapshot
 from fabu.publishing.topics import select_topic_group
@@ -65,8 +66,14 @@ class PublicationProfiles:
 
     def list(self):
         with self.store.connection() as db:
-            rows = db.execute("SELECT * FROM publication_profiles ORDER BY rowid DESC").fetchall()
-        return [self.public(dict(row)) for row in rows]
+            rows = ordered_profiles(db)
+        seen, profiles = set(), []
+        for row in rows:
+            key = row_key(row)
+            if key not in seen:
+                seen.add(key)
+                profiles.append(self.public(dict(row)))
+        return profiles
 
     def save(self, command):
         if not command.name.strip():
