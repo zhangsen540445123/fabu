@@ -21,6 +21,7 @@ from fabu.publishing.gateway import (
     SubmissionReceipt,
     UploadReceipt,
     assemble_prepared,
+    build_local_payloads,
     resource_metadata,
     verify_prepared,
 )
@@ -232,6 +233,8 @@ class CliPublisher:
 
     def _upload(self, snapshot, permit, kind):
         self._controlled_identity(snapshot, permit)
+        if self.cancel.is_set():
+            raise ValueError("Publishing operation canceled before upload")
         cached = self.journal.get(snapshot.digest, kind)
         if cached is not None:
             if self.verification_context is not None:
@@ -279,6 +282,33 @@ class CliPublisher:
         self.journal.complete(snapshot.digest, receipt)
         return receipt
 
+    def _validate_payloads(self, snapshot, permit, payloads, client_id, *, dry_run):
+        for target in snapshot.targets:
+            platform = PLATFORM_NAMES[target.account.platform]
+            with self._payload_file(payloads[target.account.account_id]) as path:
+                channel = [
+                    "--publish-channel",
+                    "local",
+                    "--client-id",
+                    client_id,
+                    "--json",
+                ]
+                commands = [["validate", platform, "video", str(path), *channel]]
+                if dry_run:
+                    commands.append(
+                        ["publish", "video", platform, str(path), "--dry-run", *channel]
+                    )
+                for command in commands:
+                    self.authority.validate(permit, snapshot, real=True)
+                    raw, good = self._call(command)
+                    phase = "validate" if command[0] == "validate" else "dry_run"
+                    if not good or not matches_local_preflight(
+                        raw, payloads[target.account.account_id], phase
+                    ):
+                        raise ValueError(
+                            "Local-channel preflight is unverified; submission remains blocked"
+                        )
+
     def prepare(self, snapshot, permit):
         self._controlled_identity(snapshot, permit)
         self.authority.validate(permit, snapshot, real=True)
@@ -287,33 +317,28 @@ class CliPublisher:
         credentials = self.credentials.load()
         if not _ID.fullmatch(credentials.local_client_id):
             raise ValueError("Unsupported local client ID format")
+        # Structural checks use unmistakably non-uploaded keys in unsigned payloads only.
+        # Validate ALL targets before beginning any journal row or spending upload budget.
+        structural = build_local_payloads(
+            snapshot,
+            {**resource_metadata(snapshot, "video"), "key": "fabu-preflight-only/video"},
+            {**resource_metadata(snapshot, "cover"), "key": "fabu-preflight-only/cover"},
+            credentials.local_client_id,
+        )
+        self._validate_payloads(
+            snapshot, permit, structural, credentials.local_client_id, dry_run=False
+        )
+        self._files(snapshot)
+        self._version()
+        if self.credentials.load().local_client_id != credentials.local_client_id:
+            raise ValueError("Local client binding changed during structural validation")
         resources = tuple(self._upload(snapshot, permit, kind) for kind in ("video", "cover"))
         prepared = assemble_prepared(
             snapshot, resources, credentials.local_client_id, self.authority
         )
-        for target in snapshot.targets:
-            platform = PLATFORM_NAMES[target.account.platform]
-            with self._payload_file(prepared.payloads[target.account.account_id]) as path:
-                channel = [
-                    "--publish-channel",
-                    "local",
-                    "--client-id",
-                    prepared.client_id,
-                    "--json",
-                ]
-                for command in [
-                    ["validate", platform, "video", str(path), *channel],
-                    ["publish", "video", platform, str(path), "--dry-run", *channel],
-                ]:
-                    self.authority.validate(permit, snapshot, real=True)
-                    raw, good = self._call(command)
-                    phase = "validate" if command[0] == "validate" else "dry_run"
-                    if not good or not matches_local_preflight(
-                        raw, prepared.payloads[target.account.account_id], phase
-                    ):
-                        raise ValueError(
-                            "Local-channel preflight is unverified; submission remains blocked"
-                        )
+        self._validate_payloads(
+            snapshot, permit, prepared.payloads, prepared.client_id, dry_run=True
+        )
         return prepared
 
     def submit(self, prepared, permit, target_id):

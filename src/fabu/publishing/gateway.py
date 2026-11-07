@@ -118,6 +118,40 @@ def resource_metadata(snapshot: PublishSnapshot, kind: str) -> dict:
         return {"size": snapshot.cover.size_bytes, "width": image.width, "height": image.height}
 
 
+def build_local_payloads(
+    snapshot: PublishSnapshot, video: dict, cover: dict, client_id: str
+) -> dict:
+    """Build unsigned payloads; structural placeholders never become upload receipts."""
+    payloads = {}
+    for target in snapshot.targets:
+        v = json.loads(json.dumps(video))
+        c = json.loads(json.dumps(cover))
+        form = json.loads(json.dumps(target.form, ensure_ascii=False))
+        if target.account.platform == "douyin":
+            form["horizontalCover"] = c
+        payloads[target.account.account_id] = {
+            "action": "publish",
+            "publishType": "video",
+            "platforms": [PLATFORM_NAMES[target.account.platform]],
+            "coverKey": cover["key"],
+            "publishChannel": "local",
+            "clientId": client_id,
+            "isDraft": False,
+            "publishArgs": {
+                "accountForms": [
+                    {
+                        "platformAccountId": target.account.account_id,
+                        "video": v,
+                        "cover": c,
+                        "coverKey": cover["key"],
+                        "contentPublishForm": form,
+                    }
+                ]
+            },
+        }
+    return payloads
+
+
 def assemble_prepared(
     snapshot: PublishSnapshot,
     resources: tuple[UploadReceipt, ...],
@@ -130,33 +164,12 @@ def assemble_prepared(
     video, cover = by_kind["video"], by_kind["cover"]
     if video.sha256 != snapshot.output.sha256 or cover.sha256 != snapshot.cover.sha256:
         raise ValueError("Resource receipt does not match frozen content")
-    payloads = {}
-    for target in snapshot.targets:
-        v = {**video.metadata, "key": video.key}
-        c = {**cover.metadata, "key": cover.key}
-        form = json.loads(json.dumps(target.form, ensure_ascii=False))
-        if target.account.platform == "douyin":
-            form["horizontalCover"] = c
-        payloads[target.account.account_id] = {
-            "action": "publish",
-            "publishType": "video",
-            "platforms": [PLATFORM_NAMES[target.account.platform]],
-            "coverKey": cover.key,
-            "publishChannel": "local",
-            "clientId": client_id,
-            "isDraft": False,
-            "publishArgs": {
-                "accountForms": [
-                    {
-                        "platformAccountId": target.account.account_id,
-                        "video": v,
-                        "cover": c,
-                        "coverKey": cover.key,
-                        "contentPublishForm": form,
-                    }
-                ]
-            },
-        }
+    payloads = build_local_payloads(
+        snapshot,
+        {**video.metadata, "key": video.key},
+        {**cover.metadata, "key": cover.key},
+        client_id,
+    )
     prepared = PreparedSubmission(
         snapshot=snapshot, client_id=client_id, resources=resources, payloads=payloads, proof=""
     )

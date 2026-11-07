@@ -9,6 +9,8 @@ from threading import Event
 
 import pytest
 from cli_contract_support import offline_response
+from test_gateway import gateway_setup as gateway_setup
+from test_gateway import live_snapshot, permit
 from test_templates import build
 
 from fabu.publishing.gateway import (
@@ -274,3 +276,32 @@ def test_installed_repost_source_url_rejection_is_not_hidden(prepared, installed
             "contentSourceUrl" in item and "external URL" in item
             for item in raw["error"]["details"]
         )
+
+
+def test_installed_repost_fails_before_gateway_upload(gateway_setup, installed_cli):
+    from fabu.tools import CommandResult
+
+    snapshot, gateway, authority, calls, _ = gateway_setup
+    snapshot = live_snapshot(snapshot)
+    original = gateway.runner
+    attempted_uploads = []
+    actual_checks = []
+
+    def runner(spec, cancel):
+        if spec.args[0] == "upload":
+            attempted_uploads.append(spec.args)
+            raise AssertionError("Structural rejection must precede any upload")
+        result = original(spec, cancel)
+        if spec.args[0] == "validate":
+            payload = json.loads(Path(spec.args[3]).read_text(encoding="utf-8"))
+            code, raw = installed_cli(payload, spec.args[1], "validate")
+            actual_checks.append((spec.args[1], code))
+            return CommandResult(exit_code=code, stdout=json.dumps(raw).encode(), stderr=b"")
+        return result
+
+    gateway.runner = runner
+    with pytest.raises(ValueError, match="preflight"):
+        gateway.prepare(snapshot, permit(authority, snapshot))
+    assert len(actual_checks) == 3 and actual_checks[-1][1] != 0
+    assert not attempted_uploads and not gateway.journal.rows
+    assert all(call.args[0] != "publish" for call in calls)

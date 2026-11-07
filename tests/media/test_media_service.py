@@ -102,3 +102,43 @@ def test_verified_output_cache_reused_on_resume(context, media_tools, tmp_path, 
     monkeypatch.setattr("fabu.media.service.render", no_render)
     second = service.process_job(store.claim_next("test-worker"))
     assert second == first and len(calls) == 1
+
+
+def test_source_login_failure_is_a_safe_persisted_reason(context):
+    from fabu.media.service import ProcessingPaused
+    from fabu.media.source import _successful
+    from fabu.tools import CommandResult
+
+    service, store, _, _, _, job, _ = context
+
+    def fail(_):
+        _successful(
+            CommandResult(
+                exit_code=1,
+                stdout=b"",
+                stderr=b"Sign in to confirm you are not a bot. token=do-not-persist",
+            )
+        )
+
+    service.source_loader = fail
+    with pytest.raises(ProcessingPaused, match="^source_authentication_required$"):
+        service.process_job(store.claim_next("test-worker"))
+    paused = store.get(job.id)
+    assert paused.state == "PAUSED" and paused.pause_reason == "source_authentication_required"
+    assert paused.source_manifest is None and paused.output_manifest is None
+    assert "do-not-persist" not in paused.model_dump_json()
+
+
+def test_untrusted_source_error_text_is_not_used_as_a_pause_reason(context):
+    from fabu.media.service import ProcessingPaused
+    from fabu.media.source import SourceUnavailable
+
+    service, store, _, _, _, job, _ = context
+
+    def fail(_):
+        raise SourceUnavailable("source_authentication_required: token=do-not-persist")
+
+    service.source_loader = fail
+    with pytest.raises(ProcessingPaused, match="^source_unavailable$"):
+        service.process_job(store.claim_next("test-worker"))
+    assert store.get(job.id).pause_reason == "source_unavailable"

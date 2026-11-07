@@ -33,6 +33,10 @@ class SourceUnavailable(ValueError):
     pass
 
 
+class SourceAuthenticationRequired(SourceUnavailable):
+    """Downloader explicitly requires authentication; never contains remote error text."""
+
+
 class SelectedFormat(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     selector: str
@@ -212,7 +216,7 @@ def _successful(result: CommandResult) -> None:
     if result.exit_code or result.timed_out or result.canceled or result.output_limit_exceeded:
         message = result.stderr.decode("utf-8", "replace").lower()
         if "sign in" in message or "login" in message:
-            raise SourceUnavailable(
+            raise SourceAuthenticationRequired(
                 "authentication_required: YouTube requires login verification; "
                 "no browser credentials were read"
             )

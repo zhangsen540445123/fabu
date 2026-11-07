@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   getPresets: vi.fn(),
   getMediaStatus: vi.fn(),
   createJob: vi.fn(),
+  resumeJob: vi.fn(),
   cancelJob: vi.fn(),
   saveSettings: vi.fn(),
 }));
@@ -82,6 +83,29 @@ beforeEach(() => {
 });
 
 describe("local dashboard", () => {
+  it("explains source login verification without implying automatic authentication", async () => {
+    const { default: App } = await import("../App");
+    api.getJobs.mockResolvedValue([
+      {
+        ...job,
+        state: "PAUSED",
+        pause_reason: "source_authentication_required",
+      },
+    ]);
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: job.spec.title }),
+    );
+    expect(await screen.findByText(/YouTube要求登录验证/)).toHaveTextContent(
+      "未读取浏览器登录态",
+    );
+    expect(screen.getByText(/YouTube要求登录验证/)).toHaveTextContent(
+      "手动重试",
+    );
+    expect(api.createJob).not.toHaveBeenCalled();
+    expect(api.resumeJob).not.toHaveBeenCalled();
+  });
+
   it("shows unverified capabilities, not publishing success", async () => {
     const { default: App } = await import("../App");
     render(<App />);

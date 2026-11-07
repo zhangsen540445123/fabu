@@ -23,7 +23,7 @@ from fabu.media.models import (
 from fabu.media.probe import probe_media
 from fabu.media.renderer import render
 from fabu.media.runtime import MediaTools
-from fabu.media.source import SourceManifest, parse_youtube_url
+from fabu.media.source import SourceAuthenticationRequired, SourceManifest, parse_youtube_url
 from fabu.media.validator import promote_output, validate_metadata, validate_output
 from fabu.presets import PresetStore
 from fabu.store import JobStore, StaleRevision
@@ -216,6 +216,8 @@ class MediaService:
         except Exception as exc:
             current = self.store.get(job.id)
             code = str(exc) if isinstance(exc, ProcessingPaused) else stage
+            if stage == "source_unavailable" and isinstance(exc, SourceAuthenticationRequired):
+                code = "source_authentication_required"
             if (
                 current.state in {"INSPECTING", "DOWNLOADING", "PROCESSING"}
                 and not current.content_frozen

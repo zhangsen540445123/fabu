@@ -225,24 +225,19 @@ def test_fake_gateway_has_no_cli_or_network_fallback(publishing_context):
 
 
 def test_unknown_upload_is_not_repeated_even_with_a_new_permit(gateway_setup):
-    import json
-
     from fabu.tools import CommandResult
 
-    snapshot, gateway, authority, calls, responses = gateway_setup
+    snapshot, gateway, authority, calls, _ = gateway_setup
     snapshot = live_snapshot(snapshot)
-    responses.extend(
-        [
-            CommandResult(
-                exit_code=0,
-                stdout=json.dumps(
-                    {"ok": True, "version": "3.2.32", "data": {"version": "3.2.32"}}
-                ).encode(),
-                stderr=b"",
-            ),
-            CommandResult(exit_code=-1, stdout=b"", stderr=b"", timed_out=True),
-        ]
-    )
+    original = gateway.runner
+
+    def runner(spec, cancel):
+        result = original(spec, cancel)
+        if spec.args[0] == "upload":
+            return CommandResult(exit_code=-1, stdout=b"", stderr=b"", timed_out=True)
+        return result
+
+    gateway.runner = runner
     with pytest.raises(ValueError, match="unknown"):
         gateway.prepare(snapshot, permit(authority, snapshot))
     with pytest.raises(ValueError, match="unknown"):
@@ -404,3 +399,154 @@ def test_real_transport_cannot_use_simulation_receipts(gateway_setup, publishing
             authority,
             journal=journal,
         )
+
+
+def test_every_target_is_structurally_checked_before_any_upload(gateway_setup):
+    import json
+
+    snapshot, gateway, authority, calls, _ = gateway_setup
+    snapshot = live_snapshot(snapshot)
+    observed = []
+    original = gateway.runner
+
+    def runner(spec, cancel):
+        if spec.args[0] in {"validate", "publish"}:
+            observed.append(
+                (spec.args[0], json.loads(Path(spec.args[3]).read_text(encoding="utf-8")))
+            )
+        return original(spec, cancel)
+
+    gateway.runner = runner
+    prepared = gateway.prepare(snapshot, permit(authority, snapshot))
+    first_upload = next(i for i, call in enumerate(calls) if call.args[0] == "upload")
+    early = [call for call in calls[:first_upload] if call.args[0] == "validate"]
+    assert len(early) == len(snapshot.targets)
+    assert all(call.args[0] != "publish" for call in calls[:first_upload])
+    for _, payload in observed[: len(snapshot.targets)]:
+        account = payload["publishArgs"]["accountForms"][0]
+        assert account["video"]["key"].startswith("fabu-preflight-only/")
+        assert account["cover"]["key"].startswith("fabu-preflight-only/")
+    assert all(r.key.startswith("cloud-publish/") for r in prepared.resources)
+    assert "fabu-preflight-only" not in prepared.model_dump_json()
+    assert len([call for call in calls if call.args[0] == "validate"]) == 2 * len(snapshot.targets)
+    assert len([call for call in calls if "--dry-run" in call.args]) == len(snapshot.targets)
+
+
+def test_last_target_validation_failure_spends_no_upload_allowance(gateway_setup):
+    import json
+
+    from fabu.tools import CommandResult
+
+    snapshot, gateway, authority, calls, _ = gateway_setup
+    snapshot = live_snapshot(snapshot)
+    scope = permit(authority, snapshot)
+    original = gateway.runner
+    rejected_payload = []
+
+    def runner(spec, cancel):
+        result = original(spec, cancel)
+        if spec.args[:2] == ["validate", "哔哩哔哩"]:
+            rejected_payload.append(json.loads(Path(spec.args[3]).read_text(encoding="utf-8")))
+            return CommandResult(exit_code=2, stdout=b'{"ok":false}', stderr=b"")
+        return result
+
+    gateway.runner = runner
+    with pytest.raises(ValueError, match="preflight"):
+        gateway.prepare(snapshot, scope)
+    assert all(call.args[0] not in {"upload", "publish"} for call in calls)
+    assert not gateway.journal.rows
+    form = rejected_payload[0]["publishArgs"]["accountForms"][0]["contentPublishForm"]
+    assert form["createType"] == 2 and form["contentSourceUrl"] == snapshot.source_url
+    # Same untouched permit still has the full two-upload budget.
+    gateway.runner = original
+    prepared = gateway.prepare(snapshot, scope)
+    assert len(prepared.resources) == 2
+    assert len([call for call in calls if call.args[0] == "upload"]) == 2
+
+
+@pytest.mark.parametrize("phase", ["validate", "dry_run"])
+@pytest.mark.parametrize("mutation", ["request_client", "request_video", "wrong_phase"])
+def test_bound_preflight_failure_stops_gateway_preparation(gateway_setup, phase, mutation):
+    import json
+
+    snapshot, gateway, authority, calls, _ = gateway_setup
+    snapshot = live_snapshot(snapshot)
+    original = gateway.runner
+    failed_at = []
+
+    def runner(spec, cancel):
+        result = original(spec, cancel)
+        hit = spec.args[0] == "validate" if phase == "validate" else "--dry-run" in spec.args
+        if hit and not failed_at:
+            raw = json.loads(result.stdout)
+            if mutation == "request_client":
+                raw["data"]["request"]["clientId"] = "wrong"
+            elif mutation == "request_video":
+                raw["data"]["request"]["publishArgs"]["accountForms"][0]["video"]["key"] = "wrong"
+            else:
+                raw["action"] = "publish"
+            failed_at.append(len(calls))
+            return result.model_copy(update={"stdout": json.dumps(raw).encode()})
+        return result
+
+    gateway.runner = runner
+    with pytest.raises(ValueError, match="preflight"):
+        gateway.prepare(snapshot, permit(authority, snapshot))
+    assert len(calls) == failed_at[0]
+    assert not any(call.args[0] == "publish" and "--dry-run" not in call.args for call in calls)
+    if phase == "validate":
+        assert not any(call.args[0] == "upload" for call in calls)
+
+
+def test_changed_file_during_structural_check_blocks_first_upload(gateway_setup):
+    snapshot, gateway, authority, calls, _ = gateway_setup
+    snapshot = live_snapshot(snapshot)
+    original = gateway.runner
+    seen = []
+
+    def runner(spec, cancel):
+        result = original(spec, cancel)
+        if spec.args[0] == "validate":
+            seen.append(spec.args)
+            if len(seen) == len(snapshot.targets):
+                snapshot.output.path.write_bytes(b"changed-during-local-validation")
+        return result
+
+    gateway.runner = runner
+    with pytest.raises(ValueError, match="missing or changed"):
+        gateway.prepare(snapshot, permit(authority, snapshot))
+    assert not any(call.args[0] == "upload" for call in calls)
+
+
+@pytest.mark.parametrize("change", ["cli", "client", "canceled", "expired"])
+def test_preupload_boundary_change_creates_no_upload_attempt(gateway_setup, change):
+    from fabu.credentials import Credentials
+
+    snapshot, gateway, authority, calls, _ = gateway_setup
+    snapshot = live_snapshot(snapshot)
+    scope = permit(authority, snapshot)
+    original = gateway.runner
+    seen = []
+
+    def runner(spec, cancel):
+        result = original(spec, cancel)
+        if spec.args[0] == "validate":
+            seen.append(spec.args)
+            if len(seen) == len(snapshot.targets):
+                if change == "cli":
+                    gateway.executable.write_bytes(b"changed-during-validation")
+                elif change == "client":
+                    gateway.credentials.save(
+                        Credentials(api_key="synthetic", local_client_id="other")
+                    )
+                elif change == "canceled":
+                    gateway.cancel.set()
+                else:
+                    authority.clock = lambda: scope.expires_at + timedelta(seconds=1)
+        return result
+
+    gateway.runner = runner
+    with pytest.raises(ValueError):
+        gateway.prepare(snapshot, scope)
+    assert not any(call.args[0] == "upload" for call in calls)
+    assert not gateway.journal.rows
