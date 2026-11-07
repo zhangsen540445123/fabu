@@ -3,6 +3,7 @@ import {
   createJob,
   createWorkflowJob,
   getPublicationProfiles,
+  getPublicationDefaults,
   type PublicationProfile,
   type PresetSummary,
 } from "../api";
@@ -27,24 +28,37 @@ export default function NewJobPage({
     ),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<PublicationProfile[]>([]),
     [profile, setProfile] = useState(""),
     [mode, setMode] = useState<"immediate" | "native_schedule">("immediate"),
     [wall, setWall] = useState("");
   useEffect(() => {
     let alive = true;
-    getPublicationProfiles()
-      .then((v) => {
-        if (alive) setProfiles(v);
+    Promise.all([getPublicationProfiles(), getPublicationDefaults()])
+      .then(([v, defaults]) => {
+        if (!alive) return;
+        const selected = defaults.profile;
+        setProfiles(
+          selected && !v.some((p) => p.id === selected.id)
+            ? [selected, ...v]
+            : v,
+        );
+        if (selected) setProfile(selected.id);
+        setLoading(false);
       })
-      .catch(() => {});
+      .catch((e) => {
+        if (alive) setError(`默认发布配置加载失败，请关闭后重试：${String(e)}`);
+      });
     return () => {
       alive = false;
     };
   }, []);
+  const liveProfile = profiles.find((p) => p.id === profile)?.scope === "live";
   const selected = presets.find((p) => p.version.id === version);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (loading) return;
     setBusy(true);
     setError("");
     try {
@@ -134,12 +148,13 @@ export default function NewJobPage({
             发布流程模板
             <select
               value={profile}
+              disabled={loading || busy}
               onChange={(e) => setProfile(e.target.value)}
             >
               <option value="">不使用发布模板 · 仅本地处理</option>
               {profiles.map((p) => (
                 <option key={p.id} value={p.id} disabled={!p.can_run}>
-                  {p.name} · {p.scope === "simulation" ? "仿真" : "真实未解锁"}
+                  {p.name} · {p.scope === "simulation" ? "仿真" : "真实预检"}
                 </option>
               ))}
             </select>
@@ -152,8 +167,12 @@ export default function NewJobPage({
                   value={mode}
                   onChange={(e) => setMode(e.target.value as typeof mode)}
                 >
-                  <option value="immediate">自动立即发布（仿真）</option>
-                  <option value="native_schedule">自动平台定时（仿真）</option>
+                  <option value="immediate">
+                    自动立即发布{liveProfile ? "（真实预检）" : "（仿真）"}
+                  </option>
+                  <option value="native_schedule">
+                    自动平台定时{liveProfile ? "（真实预检）" : "（仿真）"}
+                  </option>
                 </select>
               </label>
               {mode === "native_schedule" && (
@@ -168,7 +187,9 @@ export default function NewJobPage({
                 </label>
               )}
               <p className="preset-note">
-                成片验证完成后自动进入发布仿真流程；发布仿真仍需通过样片确认等发布专用预检。使用此模板的账号与来源声明，无需再点击发布。仿真不上传、不扣次；真实发布权限与安全限制不变。
+                {liveProfile
+                  ? "成片验证完成后自动进入真实账号发布预检，带入默认账号与来源声明。目前仅预检，不上传、不投稿；真实发布仍须通过免费额度、平台能力与媒体批准检查。"
+                  : "成片验证完成后自动进入发布仿真流程；发布仿真仍需通过样片确认等发布专用预检。使用此模板的账号与来源声明，无需再点击发布。仿真不上传、不扣次；真实发布权限与安全限制不变。"}
               </p>
             </>
           ) : (
@@ -185,11 +206,16 @@ export default function NewJobPage({
               {error}
             </p>
           )}
-          <button className="primary wide" disabled={busy || !version}>
+          <button
+            className="primary wide"
+            disabled={loading || busy || !version}
+          >
             {busy
               ? "保存中…"
               : profile
-                ? "创建自动流程（仿真）"
+                ? liveProfile
+                  ? "创建自动流程（真实预检）"
+                  : "创建自动流程（仿真）"
                 : "保存本地任务"}
           </button>
         </form>

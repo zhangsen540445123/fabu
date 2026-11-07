@@ -302,6 +302,7 @@ export interface PublicationDraft {
   topic_override: string | null;
   accounts: {
     account_id: string;
+    description?: string;
     declaration: {
       origin: "licensed_reuse" | "self_created";
       statement: string;
@@ -390,11 +391,49 @@ export const savePublishingConnection = (data: {
   });
 export const refreshPublishingAccounts = () =>
   request<{ refreshed: number }>("/api/accounts/refresh", { method: "POST" });
+export interface PublicationForm extends Omit<
+  PublicationDraft,
+  "expected_revision" | "scheduled_at_utc"
+> {
+  source: "draft" | "profile" | "default" | "fallback";
+  scheduled_at_utc: string | null;
+  topic_selection: {
+    status: string;
+    group_name: string | null;
+    tags: string[];
+  };
+}
+export interface PublicationDefaults {
+  profile: PublicationProfile | null;
+  mode: "immediate";
+  declaration_source: string | null;
+  confirmed_at: string | null;
+}
+export const getPublicationForm = (
+  jobId: string,
+  scope?: "simulation" | "live",
+) =>
+  request<PublicationForm>(
+    `/api/jobs/${jobId}/publication${scope ? `?scope=${scope}` : ""}`,
+  );
+export const getPublicationDefaults = () =>
+  request<PublicationDefaults>("/api/publishing/defaults");
+export const savePublicationDefaults = (
+  data: Pick<PublicationDraft, "scope" | "accounts" | "topic_override"> & {
+    mode: "immediate";
+  },
+) =>
+  request<PublicationDefaults>("/api/publishing/defaults", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+
 export interface PublicationProfile {
   id: string;
   name: string;
   scope: "simulation" | "live";
   can_run: boolean;
+  execution: "simulation" | "preflight_only";
   accounts: PublishAccount[];
   topic_override: string | null;
 }

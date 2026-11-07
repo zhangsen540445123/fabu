@@ -108,6 +108,8 @@ def save_draft(app, job_id, command):
     spec = JobSpec.model_validate(
         {
             **job.spec.model_dump(),
+            # Explicit task editing supersedes automatic immutable-profile intent.
+            "publication_profile_id": None,
             "target_ids": [a.account_id for a in command.accounts],
             "publish_mode": command.mode,
             "scheduled_at_utc": command.scheduled_at_utc,

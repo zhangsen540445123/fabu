@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fabu.domain import JobSpec
 from fabu.media.models import OutputManifest
+from fabu.media.service import require_verified_job_output
 from fabu.media.source import parse_youtube_url
 from fabu.publishing.models import PublicationConfig
 from fabu.publishing.service import Scope, busy, catalogue, load_config
@@ -56,7 +57,8 @@ class PublicationProfiles:
             "scope": row["scope"],
             "accounts": [a.account.model_dump(mode="json") for a in config.accounts],
             "topic_override": config.topic_override,
-            "can_run": row["scope"] == "simulation",
+            "can_run": True,
+            "execution": "simulation" if row["scope"] == "simulation" else "preflight_only",
         }
 
     def list(self):
@@ -98,8 +100,6 @@ class PublicationProfiles:
 
     def validate_spec(self, spec):
         row = self.get(spec.publication_profile_id)
-        if row["scope"] != "simulation":
-            raise ValueError("Live workflow is not enabled")
         config = self._current_config(row)
         if spec.publish_mode not in {"immediate", "native_schedule"} or spec.target_ids != [
             a.account.account_id for a in config.accounts
@@ -143,6 +143,16 @@ class PublicationProfiles:
                     "content_revision=?",
                     (now, row["job_id"], row["content_revision"]),
                 )
+                job = self.store._snapshot(
+                    db.execute("SELECT * FROM jobs WHERE id=?", (row["job_id"],)).fetchone()
+                )
+                profile = db.execute(
+                    "SELECT scope FROM publication_profiles WHERE id=?",
+                    (job.spec.publication_profile_id,),
+                ).fetchone()
+                if profile and profile["scope"] == "live":
+                    # A preflight interruption must not make verified media unavailable.
+                    continue
                 db.execute(
                     "UPDATE jobs SET state='PAUSED', pause_reason='handoff_interrupted', "
                     "revision=revision+1 WHERE id=? AND content_revision=? AND state='READY'",
@@ -151,23 +161,30 @@ class PublicationProfiles:
 
     def _resume_allowed(self, db, job):
         if (
-            job.state != "PAUSED"
+            job.state not in {"PAUSED", "READY"}
             or job.owner_worker_id
             or job.content_frozen
             or not job.spec.publication_profile_id
             or not job.output_manifest
-            or job.pause_reason not in {"handoff_interrupted", "workflow_preflight_failed"}
             or busy(db, job.id)
         ):
             return False
         marker = db.execute(
-            "SELECT state FROM workflow_handoffs WHERE job_id=? AND content_revision=?",
+            "SELECT state,error_code FROM workflow_handoffs WHERE job_id=? AND content_revision=?",
             (job.id, job.content_revision),
         ).fetchone()
         profile = db.execute(
             "SELECT scope FROM publication_profiles WHERE id=?", (job.spec.publication_profile_id,)
         ).fetchone()
-        if not marker or marker[0] != "PAUSED" or not profile or profile[0] != "simulation":
+        if not marker or marker["state"] != "PAUSED" or not profile:
+            return False
+        retryable = {"handoff_interrupted", "workflow_preflight_failed"}
+        if marker["error_code"] not in retryable:
+            return False
+        scope = profile["scope"]
+        if scope == "simulation" and (job.state != "PAUSED" or job.pause_reason not in retryable):
+            return False
+        if scope == "live" and job.state != "READY":
             return False
         if job.spec.scheduled_at_utc and job.spec.scheduled_at_utc <= datetime.now(UTC):
             return False
@@ -175,11 +192,11 @@ class PublicationProfiles:
         # A handoff reset is not permission to retry an upload or a target attempt.
         return not db.execute(
             "SELECT 1 FROM target_attempts WHERE job_id=? "
-            "UNION ALL SELECT 1 FROM upload_attempts WHERE scope='simulation' "
+            "UNION ALL SELECT 1 FROM upload_attempts WHERE scope=? "
             "AND source_video_id=? AND state IN ('SUBMITTING','UNKNOWN') "
             "UNION ALL SELECT 1 FROM publication_source_claims "
-            "WHERE scope='simulation' AND video_id=?",
-            (job.id, source, source),
+            "WHERE scope=? AND video_id=?",
+            (job.id, scope, source, scope, source),
         ).fetchone()
 
     def handoff_status(self, job_id):
@@ -244,30 +261,39 @@ class PublicationProfiles:
                 "INSERT INTO workflow_handoffs VALUES (?,?,'PREPARING',NULL,?)",
                 (job.id, job.content_revision, now),
             )
+        scope = self.get(job.spec.publication_profile_id)["scope"]
         try:
             if cancel.is_set():
                 raise ValueError("Workflow canceled")
             config = self.validate_spec(job.spec)
-            snapshot = build_publish_snapshot(
-                job,
-                OutputManifest.model_validate(job.output_manifest),
-                config,
-                store=self.store,
-                assets=self.app.state.assets,
-                presets=self.app.state.presets,
-                approvals=self.app.state.approvals,
-            )
-            coordinator = self.app.state.publication_queue.coordinator_factory(worker)
-            run = coordinator.register(snapshot, "simulation")
-            self.app.state.publication_queue.enqueue(run, "submit")
-            state, error = "QUEUED", None
+            if scope == "live":
+                # Enter the publishing stage without pretending to grant an execution permit.
+                # Preserve the READY output and existing preview policy; no upload or submit.
+                require_verified_job_output(
+                    self.store, self.app.state.presets, self.app.state.approvals, job
+                )
+                state, error = "PAUSED", "live_publish_not_enabled"
+            else:
+                snapshot = build_publish_snapshot(
+                    job,
+                    OutputManifest.model_validate(job.output_manifest),
+                    config,
+                    store=self.store,
+                    assets=self.app.state.assets,
+                    presets=self.app.state.presets,
+                    approvals=self.app.state.approvals,
+                )
+                coordinator = self.app.state.publication_queue.coordinator_factory(worker)
+                run = coordinator.register(snapshot, "simulation")
+                self.app.state.publication_queue.enqueue(run, "submit")
+                state, error = "QUEUED", None
         except (ValueError, KeyError, OSError):
             state, error = "PAUSED", "workflow_preflight_failed"
             with self.store.transaction() as db:
                 db.execute(
                     "UPDATE jobs SET state='PAUSED', pause_reason=?, revision=revision+1 WHERE "
-                    "id=? AND content_revision=? AND state='READY'",
-                    (error, job.id, job.content_revision),
+                    "id=? AND content_revision=? AND state='READY' AND ?='simulation'",
+                    (error, job.id, job.content_revision, scope),
                 )
         with self.store.transaction() as db:
             db.execute(

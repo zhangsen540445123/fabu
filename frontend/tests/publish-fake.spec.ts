@@ -13,7 +13,7 @@ test("three-platform simulation keeps partial receipts after refresh and never s
   await page.goto("/");
   await page.getByRole("button", { name: "账号与发布", exact: true }).click();
   await expect(
-    page.getByText("尚无已同步的账号", { exact: false }),
+    page.getByText("稳定ID：fixture-bilibili", { exact: false }),
   ).toBeVisible();
   await page.getByLabel("账号环境").selectOption("simulation");
   await expect(page.getByText("稳定ID：sim-bilibili")).toBeVisible();

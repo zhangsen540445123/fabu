@@ -16,6 +16,7 @@ from fabu.media.runtime import MediaTools
 from fabu.media.service import MediaService
 from fabu.media.source import SelectedFormat, SourceManifest, parse_youtube_url
 from fabu.publishing.fake_gateway import FakePublisher
+from fabu.publishing.service import catalogue
 from fabu.settings import load_settings
 from fabu.store import JobStore
 
@@ -108,6 +109,24 @@ with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
     app.state.publication_queue.publisher_factory = lambda authority, cancel: ScenarioPublisher(
         authority, outcomes=["SUBMITTED", "FAILED", "SUBMITTED"], cancel=cancel
     )
+    # Synthetic inventory in the live scope tests intent/guards, never a real transport.
+    with store.transaction() as db:
+        for account, category in catalogue(store, "simulation"):
+            account = account.model_copy(
+                update={"account_id": account.account_id.replace("sim-", "fixture-")}
+            )
+            if category:
+                category = category.model_copy(update={"account_id": account.account_id})
+            db.execute(
+                "INSERT INTO publication_catalog VALUES (?,?,?,?,?)",
+                (
+                    "live",
+                    account.account_id,
+                    account.model_dump_json(),
+                    category.model_dump_json() if category else None,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
     app.state.media_tool_identity = tools.identity
     source_ref = app.state.assets.import_file(source, "video")
     cover_ref = app.state.assets.import_file(cover, "image")

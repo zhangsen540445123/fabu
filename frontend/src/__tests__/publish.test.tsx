@@ -5,6 +5,9 @@ import TargetStatus from "../components/TargetStatus";
 import PublishForm from "../components/PublishForm";
 const api = vi.hoisted(() => ({
   getAccounts: vi.fn(),
+  getPublicationForm: vi.fn(),
+  getPublicationDefaults: vi.fn(),
+  savePublicationDefaults: vi.fn(),
   getWorkflowHandoff: vi.fn(),
   resumeWorkflowHandoff: vi.fn(),
   getPublicationProfiles: vi.fn(),
@@ -55,7 +58,26 @@ const run = {
   can_reconcile: false,
 };
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  api.getPublicationDefaults.mockResolvedValue({
+    profile: null,
+    mode: "immediate",
+  });
+  api.getPublicationForm.mockImplementation((_id, scope) =>
+    Promise.resolve({
+      source: "fallback",
+      scope: scope ?? "simulation",
+      mode: "immediate",
+      scheduled_at_utc: null,
+      accounts: [],
+      topic_override: null,
+      topic_selection: {
+        status: "selected",
+        group_name: "QKHLZMFO",
+        tags: ["剪发"],
+      },
+    }),
+  );
   api.getAccounts.mockResolvedValue({
     scope: "simulation",
     live_enabled: false,
@@ -334,4 +356,314 @@ it("reconciliation HTTP body carries explicit live scope", async () => {
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+const originalAccounts = ["douyin", "toutiao", "bilibili"].map((platform) => ({
+  account_id: `real-${platform}`,
+  declaration: {
+    origin: "self_created",
+    confirmed: true,
+    statement: platform === "toutiao" ? "self_shot" : "none",
+    bilibili_type: platform === "bilibili" ? "self_produced" : null,
+  },
+}));
+function defaultForm(overrides = {}) {
+  api.getAccounts.mockResolvedValue({
+    scope: "live",
+    live_enabled: false,
+    accounts: originalAccounts.map((a) => ({
+      account_id: a.account_id,
+      platform: a.account_id.slice(5),
+      nickname: a.account_id,
+      active: true,
+      category_names: [],
+    })),
+    topic_groups: [{ name: "QKHLZMFO", tags: ["剪发"] }],
+  });
+  api.getPublicationForm.mockResolvedValue({
+    source: "default",
+    scope: "live",
+    mode: "immediate",
+    scheduled_at_utc: null,
+    accounts: originalAccounts,
+    topic_override: null,
+    topic_selection: {
+      status: "selected",
+      group_name: "QKHLZMFO",
+      tags: ["剪发"],
+    },
+    ...overrides,
+  });
+}
+it("hydrates all six explicit live defaults without submitting", async () => {
+  defaultForm();
+  render(<PublishForm job={job} refresh={async () => {}} />);
+  await waitFor(() =>
+    expect(screen.getByLabelText("发布环境")).toHaveValue("live"),
+  );
+  expect(screen.getAllByRole("checkbox")).toHaveLength(4);
+  screen.getAllByRole("checkbox").forEach((c) => expect(c).toBeChecked());
+  expect(screen.getByLabelText("视频来源")).toHaveValue("self_created");
+  expect(screen.getByLabelText("话题组")).toHaveValue("");
+  expect(screen.getByLabelText("发布方式")).toHaveValue("immediate");
+  expect(api.configurePublication).not.toHaveBeenCalled();
+  expect(api.submitPublication).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("视频来源"), {
+    target: { value: "licensed_reuse" },
+  });
+  expect(screen.getByLabelText("我确认来源声明与授权相符")).not.toBeChecked();
+});
+it("loads a saved licensed declaration and schedule instead of replacing it with defaults", async () => {
+  defaultForm({
+    source: "draft",
+    mode: "native_schedule",
+    scheduled_at_utc: "2027-01-02T12:30:00Z",
+    accounts: [
+      {
+        account_id: "real-bilibili",
+        declaration: {
+          origin: "licensed_reuse",
+          confirmed: true,
+          statement: "none",
+          bilibili_type: "repost",
+        },
+      },
+    ],
+    topic_override: "QKHLZMFO",
+  });
+  render(<PublishForm job={job} refresh={async () => {}} />);
+  await waitFor(() =>
+    expect(screen.getByLabelText("发布方式")).toHaveValue("native_schedule"),
+  );
+  expect(screen.getByLabelText("视频来源")).toHaveValue("licensed_reuse");
+  expect(screen.getByLabelText("北京时间（Asia/Shanghai）")).toHaveValue(
+    "2027-01-02T20:30",
+  );
+  expect(screen.getByLabelText("话题组")).toHaveValue("QKHLZMFO");
+  expect(
+    screen
+      .getAllByRole("checkbox")
+      .filter((c) => (c as HTMLInputElement).checked),
+  ).toHaveLength(2);
+});
+it("persists defaults separately from a task and never publishes it", async () => {
+  defaultForm();
+  api.savePublicationDefaults.mockResolvedValue({
+    profile: { id: "default" },
+    mode: "immediate",
+  });
+  render(<PublishForm job={job} refresh={async () => {}} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "保存为新任务默认发布配置" }),
+  );
+  await waitFor(() =>
+    expect(api.savePublicationDefaults).toHaveBeenCalledWith({
+      scope: "live",
+      mode: "immediate",
+      topic_override: null,
+      accounts: originalAccounts,
+    }),
+  );
+  expect(api.configurePublication).not.toHaveBeenCalled();
+  expect(api.submitPublication).not.toHaveBeenCalled();
+});
+it("selects default live workflow for new tasks and labels it preflight only", async () => {
+  const profile = {
+    id: "live-default",
+    name: "默认发布配置",
+    scope: "live",
+    can_run: true,
+    execution: "preflight_only",
+    accounts: [],
+    topic_override: null,
+  };
+  api.getPublicationProfiles.mockResolvedValue([profile]);
+  api.getPublicationDefaults.mockResolvedValue({ profile, mode: "immediate" });
+  render(
+    <NewJobPage
+      presets={[
+        {
+          approved: false,
+          version: {
+            id: "preset",
+            preset_id: "p",
+            revision: 1,
+            name: "基础",
+            schema_version: 1,
+            steps: [],
+            output: {},
+          },
+        },
+      ]}
+      defaultPreset="preset"
+      onClose={() => {}}
+      onSaved={async () => {}}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("发布流程模板")).toHaveValue("live-default"),
+  );
+  fireEvent.change(screen.getByLabelText("YouTube链接"), {
+    target: { value: "https://youtu.be/Z6imSiJLd9Q" },
+  });
+  fireEvent.change(screen.getByLabelText("发布标题"), {
+    target: { value: "剃光头" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "创建自动流程（真实预检）" }),
+  );
+  await waitFor(() =>
+    expect(api.createWorkflowJob).toHaveBeenCalledWith({
+      source_url: "https://youtu.be/Z6imSiJLd9Q",
+      title: "剃光头",
+      preset_version_id: "preset",
+      profile_id: "live-default",
+      mode: "immediate",
+    }),
+  );
+  expect(api.submitPublication).not.toHaveBeenCalled();
+});
+it("shows live automatic handoff as blocked not as published", async () => {
+  defaultForm({ source: "profile" });
+  api.getWorkflowHandoff.mockResolvedValue({
+    state: "PAUSED",
+    error_code: "live_publish_not_enabled",
+    can_resume: false,
+  });
+  render(
+    <PublishForm
+      job={{
+        ...job,
+        spec: { ...job.spec, publication_profile_id: "live-profile" },
+      }}
+      refresh={async () => {}}
+    />,
+  );
+  expect(await screen.findByText(/成片已自动进入发布预检/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "开始本地仿真" }),
+  ).not.toBeInTheDocument();
+});
+
+it("blocks saving a missing default target instead of silently dropping it", async () => {
+  defaultForm({
+    accounts: [
+      ...originalAccounts,
+      { account_id: "missing", declaration: originalAccounts[0].declaration },
+    ],
+  });
+  render(<PublishForm job={job} refresh={async () => {}} />);
+  const missing = await screen.findByRole("checkbox", {
+    name: /未找到已选账号/,
+  });
+  expect(missing).toBeChecked();
+  fireEvent.click(
+    screen.getByRole("button", { name: "保存为新任务默认发布配置" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "目标账号缺失或失效",
+  );
+  expect(api.savePublicationDefaults).not.toHaveBeenCalled();
+  fireEvent.click(missing);
+  expect(
+    screen.queryByRole("checkbox", { name: /未找到已选账号/ }),
+  ).not.toBeInTheDocument();
+});
+it("keeps per-platform declaration details when saving metadata without a source change", async () => {
+  const accounts = [
+    {
+      account_id: "real-bilibili",
+      description: "单独说明",
+      declaration: {
+        origin: "self_created",
+        confirmed: true,
+        statement: "ai",
+        bilibili_type: "self_produced",
+      },
+    },
+  ];
+  defaultForm({ source: "draft", accounts });
+  render(<PublishForm job={job} refresh={async () => {}} />);
+  await waitFor(() =>
+    expect(screen.getByLabelText("发布环境")).toHaveValue("live"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保存配置并预检" }));
+  await waitFor(() =>
+    expect(api.configurePublication).toHaveBeenCalledWith(
+      "job",
+      expect.objectContaining({ accounts }),
+    ),
+  );
+});
+it("does not create a local-only job if default loading fails", async () => {
+  api.getPublicationProfiles.mockResolvedValue([]);
+  api.getPublicationDefaults.mockRejectedValue(new Error("offline"));
+  render(
+    <NewJobPage
+      presets={[]}
+      defaultPreset=""
+      onClose={() => {}}
+      onSaved={async () => {}}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "默认发布配置加载失败",
+  );
+  expect(screen.getByRole("button", { name: "保存本地任务" })).toBeDisabled();
+  expect(api.createWorkflowJob).not.toHaveBeenCalled();
+});
+it("reloads task declarations when a new content revision arrives", async () => {
+  defaultForm();
+  const { rerender } = render(
+    <PublishForm job={job} refresh={async () => {}} />,
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("视频来源")).toHaveValue("self_created"),
+  );
+  defaultForm({
+    source: "draft",
+    accounts: [
+      {
+        account_id: "real-bilibili",
+        declaration: {
+          origin: "licensed_reuse",
+          confirmed: true,
+          statement: "none",
+          bilibili_type: "repost",
+        },
+      },
+    ],
+  });
+  rerender(
+    <PublishForm
+      job={{ ...job, revision: 2, content_revision: 2 }}
+      refresh={async () => {}}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("视频来源")).toHaveValue("licensed_reuse"),
+  );
+  expect(api.configurePublication).not.toHaveBeenCalled();
+});
+it("offers preflight-only retry for a recoverable live handoff", async () => {
+  defaultForm({ source: "profile" });
+  api.getWorkflowHandoff.mockResolvedValue({
+    state: "PAUSED",
+    error_code: "workflow_preflight_failed",
+    can_resume: true,
+  });
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  const liveJob = {
+    ...job,
+    spec: { ...job.spec, publication_profile_id: "live-profile" },
+  };
+  api.resumeWorkflowHandoff.mockResolvedValue(liveJob);
+  render(<PublishForm job={liveJob} refresh={refresh} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "重试发布预检（不上传）" }),
+  );
+  await waitFor(() =>
+    expect(api.resumeWorkflowHandoff).toHaveBeenCalledWith(liveJob),
+  );
+  expect(api.submitPublication).not.toHaveBeenCalled();
 });

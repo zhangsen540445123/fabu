@@ -11,6 +11,7 @@ from fabu.publishing.connection import (
     save_connection,
 )
 from fabu.publishing.coordinator import PublicationCoordinator
+from fabu.publishing.defaults import DefaultsRequest, form_for_job, get_defaults, save_defaults
 from fabu.publishing.profiles import ProfileRequest, WorkflowRequest
 from fabu.publishing.service import (
     DraftRequest,
@@ -227,5 +228,26 @@ def resume_handoff(job_id: str, command: HandoffResume, request: Request):
         return request.app.state.publication_profiles.resume_handoff(
             job_id, command.expected_revision
         )
+    except (ValueError, KeyError) as exc:
+        raise conflict(exc) from exc
+
+
+@router.get("/publishing/defaults")
+def publishing_defaults(request: Request):
+    return get_defaults(request.app)
+
+
+@router.put("/publishing/defaults")
+def configure_defaults(command: DefaultsRequest, request: Request):
+    try:
+        return save_defaults(request.app, command)
+    except (ValueError, KeyError) as exc:
+        raise conflict(exc) from exc
+
+
+@router.get("/jobs/{job_id}/publication")
+def publication_form(job_id: str, request: Request, scope: Scope | None = None):
+    try:
+        return form_for_job(request.app, job_id, scope)
     except (ValueError, KeyError) as exc:
         raise conflict(exc) from exc

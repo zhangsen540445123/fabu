@@ -10,6 +10,8 @@ const api = vi.hoisted(() => ({
   getJobPlan: vi.fn(),
   getJobPreviews: vi.fn(),
   getAccounts: vi.fn(),
+  getPublicationDefaults: vi.fn(),
+  getPublicationForm: vi.fn(),
   getTargetStatus: vi.fn(),
   getPublicationProfiles: vi.fn(),
   createPreview: vi.fn(),
@@ -58,6 +60,19 @@ const job = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  api.getPublicationDefaults.mockResolvedValue({
+    profile: null,
+    mode: "immediate",
+  });
+  api.getPublicationForm.mockResolvedValue({
+    source: "fallback",
+    scope: "simulation",
+    mode: "immediate",
+    accounts: [],
+    topic_override: null,
+    scheduled_at_utc: null,
+    topic_selection: { status: "selected", group_name: "WRHkkYwU", tags: [] },
+  });
   api.initializeSession.mockResolvedValue(undefined);
   api.getJobPlan.mockResolvedValue({
     digest: "plan1234567890abcdef",
@@ -224,6 +239,11 @@ describe("local dashboard", () => {
       target: { value: job.spec.title },
     });
     api.getJobs.mockResolvedValue([job]);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "保存本地任务" }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "保存本地任务" }));
     await waitFor(() =>
       expect(api.createJob).toHaveBeenCalledWith(

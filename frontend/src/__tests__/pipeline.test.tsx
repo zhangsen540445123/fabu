@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   resumeJob: vi.fn(),
   createJob: vi.fn(),
   getPublicationProfiles: vi.fn(),
+  getPublicationDefaults: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -73,6 +74,10 @@ const paused = {
 };
 beforeEach(() => {
   vi.resetAllMocks();
+  api.getPublicationDefaults.mockResolvedValue({
+    profile: null,
+    mode: "immediate",
+  });
   api.getHardwareStatus.mockResolvedValue({
     status: "unchecked",
     stale: true,
@@ -372,7 +377,11 @@ it.each([false, true])(
     expect(screen.getByText(/完整性校验后.*自动按所选预设处理/)).toBeVisible();
     expect(screen.getByText(/样片检查可选/)).toBeVisible();
     expect(screen.queryByText(/将暂停等待样片确认/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "保存本地任务" })).toBeEnabled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "保存本地任务" }),
+      ).toBeEnabled(),
+    );
     await waitFor(() =>
       expect(api.getPublicationProfiles).toHaveBeenCalledOnce(),
     );

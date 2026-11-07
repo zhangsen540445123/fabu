@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import {
   configurePublication,
   getAccounts,
+  getPublicationForm,
+  savePublicationDefaults,
+  type PublicationForm,
   getWorkflowHandoff,
   resumeWorkflowHandoff,
   type WorkflowHandoff,
@@ -27,6 +30,16 @@ export default function PublishForm({
   const [handoff, setHandoff] = useState<WorkflowHandoff | null>(null);
   const [profileName, setProfileName] = useState("日常助眠"),
     [profileMessage, setProfileMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [scopeOverride, setScopeOverride] = useState<{
+    jobId: string;
+    scope: "simulation" | "live";
+  } | null>(null);
+  const requestedScope =
+    scopeOverride?.jobId === job.id ? scopeOverride.scope : undefined;
+  const [form, setForm] = useState<PublicationForm | null>(null);
+  const [declarationChanged, setDeclarationChanged] = useState(false);
+  const [defaultsMessage, setDefaultsMessage] = useState("");
   const [scope, setScope] = useState<"simulation" | "live">("simulation");
   const [catalog, setCatalog] = useState<AccountCatalogue | null>(null),
     [selected, setSelected] = useState<string[]>([]),
@@ -34,7 +47,7 @@ export default function PublishForm({
     [mode, setMode] = useState<"immediate" | "native_schedule">("immediate"),
     [wall, setWall] = useState(""),
     [topic, setTopic] = useState(""),
-    [origin, setOrigin] = useState<"licensed_reuse" | "self_created">(
+    [origin, setOrigin] = useState<"licensed_reuse" | "self_created" | "">(
       "licensed_reuse",
     ),
     [confirmed, setConfirmed] = useState(false),
@@ -42,38 +55,74 @@ export default function PublishForm({
     [error, setError] = useState("");
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    setLoading(true);
     setRun(null);
     setCatalog(null);
+    setForm(null);
+    setError("");
+    setDefaultsMessage("");
     setConfirmed(false);
-    getAccounts(scope)
-      .then((c) => {
-        if (alive) {
-          setCatalog(c);
-          setSelected(
-            scope === "simulation"
+    async function load() {
+      try {
+        const f = await getPublicationForm(job.id, requestedScope);
+        const c = await getAccounts(f.scope);
+        if (!alive) return;
+        setForm(f);
+        setCatalog(c);
+        setScope(f.scope);
+        setSelected(
+          f.source === "fallback"
+            ? f.scope === "simulation"
               ? c.accounts.filter((a) => a.active).map((a) => a.account_id)
-              : [],
-          );
-        }
-      })
-      .catch((e) => {
-        if (alive) setError(String(e));
-      });
-    const sync = () =>
-      getTargetStatus(job.id, scope)
-        .then((r) => {
-          if (alive) setRun(r);
-        })
-        .catch((e) => {
-          if (alive) setError(String(e));
-        });
-    void sync();
-    const timer = setInterval(() => void sync(), 1500);
+              : []
+            : f.accounts.map((a) => a.account_id),
+        );
+        const origins = [
+          ...new Set(f.accounts.map((a) => a.declaration.origin)),
+        ];
+        setOrigin(
+          origins.length === 1
+            ? origins[0]
+            : origins.length
+              ? ""
+              : "licensed_reuse",
+        );
+        setConfirmed(
+          f.accounts.length > 0 &&
+            f.accounts.every((a) => a.declaration.confirmed),
+        );
+        setDeclarationChanged(false);
+        setTopic(f.topic_override ?? "");
+        setMode(f.mode);
+        setWall(
+          f.scheduled_at_utc
+            ? new Date(new Date(f.scheduled_at_utc).getTime() + 8 * 3600_000)
+                .toISOString()
+                .slice(0, 16)
+            : "",
+        );
+        setLoading(false);
+        const sync = () =>
+          getTargetStatus(job.id, f.scope)
+            .then((r) => {
+              if (alive) setRun(r);
+            })
+            .catch((e) => {
+              if (alive) setError(String(e));
+            });
+        void sync();
+        timer = setInterval(() => void sync(), 1500);
+      } catch (e) {
+        if (alive) setError(`发布配置加载失败，请重新打开任务：${String(e)}`);
+      }
+    }
+    void load();
     return () => {
       alive = false;
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
     };
-  }, [job.id, scope]);
+  }, [job.id, job.content_revision, requestedScope]);
   useEffect(() => {
     let alive = true;
     setHandoff(null);
@@ -113,41 +162,82 @@ export default function PublishForm({
   const commandActive =
     !!run?.command && ["QUEUED", "RUNNING"].includes(run.command.state);
   const locked =
-    job.content_frozen || hasAttempts || commandActive || job.state !== "READY";
+    loading ||
+    job.content_frozen ||
+    hasAttempts ||
+    commandActive ||
+    job.state !== "READY";
+  function accountChoices(): PublicationDraft["accounts"] {
+    if (loading || !confirmed || !selected.length)
+      throw new Error("请选择账号并确认来源声明");
+    const accounts = selected.map((id) =>
+      catalog?.accounts.find((a) => a.account_id === id),
+    );
+    if (accounts.some((a) => !a?.active))
+      throw new Error(
+        "已保存的目标账号缺失或失效；请核对账号选择，不会自动减少目标",
+      );
+    return accounts.map((a) => {
+      const saved = form?.accounts.find(
+        (entry) => entry.account_id === a!.account_id,
+      );
+      if (saved && !declarationChanged) return saved;
+      if (!origin) throw new Error("新增账号需要明确选择来源声明");
+      return {
+        account_id: a!.account_id,
+        ...(saved?.description !== undefined
+          ? { description: saved.description }
+          : {}),
+        declaration: {
+          origin,
+          confirmed,
+          statement:
+            a!.platform === "toutiao"
+              ? origin === "self_created"
+                ? "self_shot"
+                : "offsite"
+              : "none",
+          bilibili_type:
+            a!.platform === "bilibili"
+              ? origin === "self_created"
+                ? "self_produced"
+                : "repost"
+              : null,
+        },
+      };
+    });
+  }
+  async function saveDefaults() {
+    setBusy(true);
+    setError("");
+    setDefaultsMessage("");
+    try {
+      await savePublicationDefaults({
+        scope,
+        mode: "immediate",
+        topic_override: topic || null,
+        accounts: accountChoices(),
+      });
+      setDefaultsMessage(
+        "已保存：仅影响之后新建的任务，默认立即发布；不会修改或发布当前任务。",
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存默认配置失败");
+    } finally {
+      setBusy(false);
+    }
+  }
   async function save(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const accounts = (catalog?.accounts ?? []).filter((a) =>
-        selected.includes(a.account_id),
-      );
-      if (!confirmed || !accounts.length)
-        throw new Error("请选择账号并确认来源声明");
       const command: PublicationDraft = {
         expected_revision: job.revision,
         scope,
         mode,
         topic_override: topic || null,
-        accounts: accounts.map((a) => ({
-          account_id: a.account_id,
-          declaration: {
-            origin,
-            confirmed,
-            statement:
-              a.platform === "toutiao"
-                ? origin === "licensed_reuse"
-                  ? "offsite"
-                  : "self_shot"
-                : "none",
-            bilibili_type:
-              a.platform === "bilibili"
-                ? origin === "self_created"
-                  ? "self_produced"
-                  : "repost"
-                : null,
-          },
-        })),
+        accounts: accountChoices(),
       };
       if (mode === "native_schedule")
         command.scheduled_at_utc = beijingToUtc(wall);
@@ -201,8 +291,13 @@ export default function PublishForm({
         发布环境
         <select
           value={scope}
-          disabled={busy || commandActive}
-          onChange={(e) => setScope(e.target.value as typeof scope)}
+          disabled={loading || busy || commandActive}
+          onChange={(e) =>
+            setScopeOverride({
+              jobId: job.id,
+              scope: e.target.value as typeof scope,
+            })
+          }
         >
           <option value="simulation">本地仿真（不会上传）</option>
           <option value="live">真实账号（配置、预检与只读对账）</option>
@@ -218,6 +313,24 @@ export default function PublishForm({
           当前操作不会上传或投稿。真实账号支持配置、预检及已有任务的只读对账；回执协议未经验证时仍显示结果不明，不会把“查询成功”当作“平台已公开”。预约时间表示平台原生预约，不是在本机等到时间再上传。
         </p>
       </div>
+      {loading && <p role="status">正在读取已保存的发布配置…</p>}
+      {scope === "live" && handoff?.state === "PAUSED" && (
+        <div className="preset-note" role="status">
+          {handoff.error_code === "live_publish_not_enabled"
+            ? "成片已自动进入发布预检，默认配置已带入。真实投稿尚未通过免费额度与平台能力验收，当前未上传、未发布；正式提交仍受媒体批准策略约束。"
+            : "自动发布预检未通过，请核对成片、账号、话题与预约时间；当前未上传或发布。"}
+          {handoff.can_resume && (
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy || commandActive}
+              onClick={() => void resumeHandoff()}
+            >
+              重试发布预检（不上传）
+            </button>
+          )}
+        </div>
+      )}
       {scope === "simulation" &&
         job.state === "PAUSED" &&
         handoff?.state === "PAUSED" && (
@@ -244,12 +357,28 @@ export default function PublishForm({
         <form onSubmit={(e) => void save(e)}>
           <fieldset disabled={busy || locked}>
             <legend>目标账号（稳定ID）</legend>
+            {selected
+              .filter(
+                (id) => !catalog?.accounts.some((a) => a.account_id === id),
+              )
+              .map((id) => (
+                <label className="checkbox-row" key={id}>
+                  <input
+                    type="checkbox"
+                    checked
+                    onChange={() =>
+                      setSelected((v) => v.filter((item) => item !== id))
+                    }
+                  />
+                  未找到已选账号 · {id}（请同步账号或明确取消选择）
+                </label>
+              ))}
             {catalog?.accounts.map((a) => (
               <label className="checkbox-row" key={a.account_id}>
                 <input
                   type="checkbox"
                   checked={selected.includes(a.account_id)}
-                  disabled={!a.active}
+                  disabled={!a.active && !selected.includes(a.account_id)}
                   onChange={(e) =>
                     setSelected((v) =>
                       e.target.checked
@@ -292,18 +421,24 @@ export default function PublishForm({
                 onChange={(e) => {
                   setOrigin(e.target.value as typeof origin);
                   setConfirmed(false);
+                  setDeclarationChanged(true);
                 }}
               >
+                {origin === "" && (
+                  <option value="">保留各平台已保存的来源声明</option>
+                )}
                 <option value="licensed_reuse">取得授权的转载内容</option>
                 <option value="self_created">本人创作的原创内容</option>
               </select>
             </label>
-            <p>
-              授权转载不等于本人原创。B站将声明为
-              {origin === "self_created" ? "原创" : "转载并附来源链接"}
-              ，头条将声明为
-              {origin === "self_created" ? "自行拍摄" : "取材站外"}。
-            </p>
+            {origin && (
+              <p>
+                授权转载不等于本人原创。B站将声明为
+                {origin === "self_created" ? "原创" : "转载并附来源链接"}
+                ，头条将声明为
+                {origin === "self_created" ? "自行拍摄" : "取材站外"}。
+              </p>
+            )}
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -347,6 +482,22 @@ export default function PublishForm({
           </fieldset>
         </form>
       )}
+      {!hasAttempts && !loading && (
+        <div className="preset-note">
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy || !confirmed || !selected.length}
+            onClick={() => void saveDefaults()}
+          >
+            保存为新任务默认发布配置
+          </button>
+          <p>
+            仅保存当前环境、所选账号、话题与来源声明；新任务默认立即发布，不复用本次预约时间。
+          </p>
+          {defaultsMessage && <p role="status">{defaultsMessage}</p>}
+        </div>
+      )}
       {run?.snapshot_digest &&
         !job.content_frozen &&
         !job.spec.publication_profile_id && (
@@ -372,6 +523,14 @@ export default function PublishForm({
             {profileMessage && <p role="status">{profileMessage}</p>}
           </details>
         )}
+      {form?.topic_selection && !topic && !run?.topic && (
+        <p>
+          标题自动匹配：
+          {form.topic_selection.status === "selected"
+            ? `${form.topic_selection.group_name} · ${form.topic_selection.tags.join("、")}`
+            : "未唯一匹配，请手动选择话题组"}
+        </p>
+      )}
       {run?.topic && (
         <p>
           命中话题组：{run.topic.group_name} · {run.topic.tags.join("、")}
