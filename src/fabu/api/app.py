@@ -33,6 +33,7 @@ from fabu.publishing.journal import SqliteUploadJournal
 from fabu.publishing.permits import PermitAuthority
 from fabu.publishing.profiles import PublicationProfiles
 from fabu.publishing.queue import PublicationQueue
+from fabu.publishing.readonly import LiveReconciler
 from fabu.publishing.reconcile import recover_publications
 from fabu.settings import Settings, check_environment
 from fabu.store import JobStore
@@ -108,6 +109,7 @@ def create_app(
         app.state.publication_authority,
         lambda worker: coordinator(app, worker),
         app.state.media_controller.wake,
+        readonly_factory=lambda cancel: LiveReconciler(app, cancel),
     )
     app.state.media_controller.publication_queue = app.state.publication_queue
     app.state.publication_profiles = PublicationProfiles(app)

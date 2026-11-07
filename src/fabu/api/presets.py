@@ -171,10 +171,12 @@ def _asset_view(request, ref):
 @router.post("/assets", status_code=201)
 def import_asset(command: AssetImport, request: Request):
     try:
-        ref = request.app.state.assets.import_file(command.path, command.media_type)
-        with request.app.state.store.transaction() as db:
-            db.execute("INSERT INTO asset_labels VALUES (?,?)", (ref.id, command.path.name))
-        return _asset_view(request, ref)
+        # Rebinding the media drive cannot race an in-flight copy into its old library.
+        with request.app.state.settings_lock:
+            ref = request.app.state.assets.import_file(command.path, command.media_type)
+            with request.app.state.store.transaction() as db:
+                db.execute("INSERT INTO asset_labels VALUES (?,?)", (ref.id, command.path.name))
+            return _asset_view(request, ref)
     except (ValueError, OSError) as exc:
         raise HTTPException(422, "无法导入素材：检查路径、格式和可用空间") from exc
 

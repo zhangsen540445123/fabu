@@ -221,3 +221,53 @@ def test_changing_empty_media_directory_rebinds_asset_library(app, tmp_path):
         ).status_code
         == 409
     )
+
+
+def test_media_directory_cannot_change_while_asset_import_is_in_flight(app, tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    client, headers = login(app)
+    image = tmp_path / "racing.png"
+    Image.new("RGB", (10, 10), "red").save(image)
+    entered, release, setting_started = Event(), Event(), Event()
+    original = app.state.assets.import_file
+    initial = app.state.assets.root
+
+    def blocked(path, kind):
+        entered.set()
+        assert release.wait(5)
+        return original(path, kind)
+
+    monkeypatch.setattr(app.state.assets, "import_file", blocked)
+
+    def change():
+        setting_started.set()
+        return client.put(
+            "/api/settings", json={"data_dir": str(tmp_path / "other-drive")}, headers=headers
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        importing = pool.submit(
+            client.post,
+            "/api/assets",
+            json={"path": str(image), "media_type": "image"},
+            headers=headers,
+        )
+        assert entered.wait(3)
+        updating = pool.submit(change)
+        assert setting_started.wait(3)
+        try:
+            try:
+                result = updating.result(timeout=0.25)
+            except TimeoutError:
+                result = None
+            if result is not None:
+                assert result.status_code == 409
+        finally:
+            release.set()
+        assert importing.result(timeout=5).status_code == 201
+        assert updating.result(timeout=5).status_code == 409
+    assert app.state.assets.root == initial
+    ref = client.get("/api/assets").json()[0]
+    assert client.get(f"/api/assets/{ref['id']}/file").status_code == 200

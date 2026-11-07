@@ -11,7 +11,7 @@ from fabu.domain import JobSpec
 from fabu.media.models import OutputManifest
 from fabu.media.source import parse_youtube_url
 from fabu.publishing.models import PublicationConfig
-from fabu.publishing.service import Scope, catalogue, load_config
+from fabu.publishing.service import Scope, busy, catalogue, load_config
 from fabu.publishing.templates import build_publish_snapshot
 from fabu.publishing.topics import select_topic_group
 
@@ -148,6 +148,81 @@ class PublicationProfiles:
                     "revision=revision+1 WHERE id=? AND content_revision=? AND state='READY'",
                     (row["job_id"], row["content_revision"]),
                 )
+
+    def _resume_allowed(self, db, job):
+        if (
+            job.state != "PAUSED"
+            or job.owner_worker_id
+            or job.content_frozen
+            or not job.spec.publication_profile_id
+            or not job.output_manifest
+            or job.pause_reason not in {"handoff_interrupted", "workflow_preflight_failed"}
+            or busy(db, job.id)
+        ):
+            return False
+        marker = db.execute(
+            "SELECT state FROM workflow_handoffs WHERE job_id=? AND content_revision=?",
+            (job.id, job.content_revision),
+        ).fetchone()
+        profile = db.execute(
+            "SELECT scope FROM publication_profiles WHERE id=?", (job.spec.publication_profile_id,)
+        ).fetchone()
+        if not marker or marker[0] != "PAUSED" or not profile or profile[0] != "simulation":
+            return False
+        if job.spec.scheduled_at_utc and job.spec.scheduled_at_utc <= datetime.now(UTC):
+            return False
+        source = parse_youtube_url(job.spec.source_url)
+        # A handoff reset is not permission to retry an upload or a target attempt.
+        return not db.execute(
+            "SELECT 1 FROM target_attempts WHERE job_id=? "
+            "UNION ALL SELECT 1 FROM upload_attempts WHERE scope='simulation' "
+            "AND source_video_id=? AND state IN ('SUBMITTING','UNKNOWN') "
+            "UNION ALL SELECT 1 FROM publication_source_claims "
+            "WHERE scope='simulation' AND video_id=?",
+            (job.id, source, source),
+        ).fetchone()
+
+    def handoff_status(self, job_id):
+        with self.store.connection() as db:
+            job = self.store._snapshot(
+                db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            )
+            row = db.execute(
+                "SELECT state,error_code FROM workflow_handoffs WHERE job_id=? "
+                "AND content_revision=?",
+                (job.id, job.content_revision),
+            ).fetchone()
+            return {
+                "state": row["state"] if row else "NOT_STARTED",
+                "error_code": row["error_code"] if row else None,
+                "can_resume": self._resume_allowed(db, job),
+            }
+
+    def resume_handoff(self, job_id, expected_revision):
+        job = self.store.get(job_id)
+        self.validate_spec(job.spec)
+        with self.store.transaction() as db:
+            current = self.store._snapshot(
+                db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            )
+            if (
+                current != job
+                or current.revision != expected_revision
+                or not self._resume_allowed(db, current)
+            ):
+                raise ValueError("Handoff requires unchanged content and no uncertain side effects")
+            db.execute(
+                "DELETE FROM workflow_handoffs WHERE job_id=? AND content_revision=?",
+                (job.id, job.content_revision),
+            )
+            db.execute(
+                "UPDATE jobs SET state='READY',pause_reason=NULL,revision=revision+1, "
+                "updated_at=? WHERE id=?",
+                (datetime.now(UTC).isoformat(), job.id),
+            )
+            self.store._event(db, job.id, {"event": "handoff_resume_requested", "status": "READY"})
+        self.app.state.media_controller.wake()
+        return self.store.get(job_id)
 
     def process_ready(self, worker, cancel):
         if not worker.active or worker.store.path != self.store.path:

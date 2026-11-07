@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import {
   configurePublication,
   getAccounts,
+  getWorkflowHandoff,
+  resumeWorkflowHandoff,
+  type WorkflowHandoff,
   getTargetStatus,
   preflightPublication,
   reconcilePublication,
@@ -21,6 +24,7 @@ export default function PublishForm({
   job: Job;
   refresh: () => Promise<void>;
 }) {
+  const [handoff, setHandoff] = useState<WorkflowHandoff | null>(null);
   const [profileName, setProfileName] = useState("日常助眠"),
     [profileMessage, setProfileMessage] = useState("");
   const [scope, setScope] = useState<"simulation" | "live">("simulation");
@@ -70,6 +74,41 @@ export default function PublishForm({
       clearInterval(timer);
     };
   }, [job.id, scope]);
+  useEffect(() => {
+    let alive = true;
+    setHandoff(null);
+    if (!job.spec.publication_profile_id) return;
+    const sync = async () => {
+      try {
+        const status = await getWorkflowHandoff(job.id);
+        if (alive) setHandoff(status);
+      } catch (e) {
+        if (alive) {
+          setHandoff(null);
+          setError(String(e));
+        }
+      }
+    };
+    void sync();
+    const timer = setInterval(() => void sync(), 1500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [job.id, job.revision, job.spec.publication_profile_id]);
+  async function resumeHandoff() {
+    setBusy(true);
+    setError("");
+    try {
+      await resumeWorkflowHandoff(job);
+      setHandoff(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "恢复自动衔接失败");
+    } finally {
+      setBusy(false);
+    }
+  }
   const hasAttempts = run?.targets.some((t) => t.state !== "PENDING") ?? false;
   const commandActive =
     !!run?.command && ["QUEUED", "RUNNING"].includes(run.command.state);
@@ -126,10 +165,15 @@ export default function PublishForm({
     setBusy(true);
     setError("");
     try {
-      await (action === "submit" ? submitPublication : reconcilePublication)(
-        job.id,
-        run.snapshot_digest,
-      );
+      if (action === "submit") {
+        if (scope !== "simulation" || run.scope !== "simulation")
+          throw new Error("真实投稿尚未解锁");
+        await submitPublication(job.id, run.snapshot_digest);
+      } else {
+        if (run.scope !== scope)
+          throw new Error("发布环境已变更，请等待状态刷新");
+        await reconcilePublication(job.id, run.snapshot_digest, scope);
+      }
       setRun(await getTargetStatus(job.id, scope));
       await refresh();
     } catch (e) {
@@ -161,7 +205,7 @@ export default function PublishForm({
           onChange={(e) => setScope(e.target.value as typeof scope)}
         >
           <option value="simulation">本地仿真（不会上传）</option>
-          <option value="live">真实账号（仅配置与预检）</option>
+          <option value="live">真实账号（配置、预检与只读对账）</option>
         </select>
       </label>
       <div className="preset-note">
@@ -171,9 +215,31 @@ export default function PublishForm({
             : "真实账号配置 · 投稿功能未解锁"}
         </strong>
         <p>
-          当前操作不会上传或投稿。真实账号仅保存配置与预检，不会消耗发布次数。预约时间表示平台原生预约，不是在本机等到时间再上传。
+          当前操作不会上传或投稿。真实账号支持配置、预检及已有任务的只读对账；回执协议未经验证时仍显示结果不明，不会把“查询成功”当作“平台已公开”。预约时间表示平台原生预约，不是在本机等到时间再上传。
         </p>
       </div>
+      {scope === "simulation" &&
+        job.state === "PAUSED" &&
+        handoff?.state === "PAUSED" && (
+          <div className="preset-note">
+            <p>
+              自动衔接已暂停。恢复时会重新检查成片、预览批准、账号和预约时间，不会重新渲染，也不会重试结果不明的上传或投稿。
+            </p>
+            {handoff.can_resume ? (
+              <button
+                className="secondary"
+                disabled={busy || commandActive}
+                onClick={() => void resumeHandoff()}
+              >
+                恢复自动衔接（仿真）
+              </button>
+            ) : (
+              <p>
+                当前证据不允许恢复；请先核对已有发布记录及配置，不要通过重置重复投稿。
+              </p>
+            )}
+          </div>
+        )}
       {!hasAttempts && (
         <form onSubmit={(e) => void save(e)}>
           <fieldset disabled={busy || locked}>
@@ -321,7 +387,7 @@ export default function PublishForm({
         />
       )}
       {commandActive && (
-        <p role="status">仿真任务已排队或正在执行，请等待状态回执。</p>
+        <p role="status">操作已排队或正在执行，请等待状态回执。</p>
       )}
       {run?.source_conflict && (
         <p className="error" role="alert">

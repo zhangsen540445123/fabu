@@ -338,10 +338,14 @@ export const submitPublication = (jobId: string, digest: string) =>
     method: "POST",
     body: JSON.stringify({ snapshot_digest: digest, scope: "simulation" }),
   });
-export const reconcilePublication = (jobId: string, digest: string) =>
+export const reconcilePublication = (
+  jobId: string,
+  digest: string,
+  scope: "simulation" | "live" = "simulation",
+) =>
   request(`/api/jobs/${jobId}/reconcile`, {
     method: "POST",
-    body: JSON.stringify({ snapshot_digest: digest, scope: "simulation" }),
+    body: JSON.stringify({ snapshot_digest: digest, scope }),
   });
 export interface PublishingConnection {
   configured: boolean;
@@ -396,4 +400,17 @@ export const createWorkflowJob = (data: {
   request<Job>("/api/workflow/jobs", {
     method: "POST",
     body: JSON.stringify(data),
+  });
+
+export interface WorkflowHandoff {
+  state: string;
+  error_code: string | null;
+  can_resume: boolean;
+}
+export const getWorkflowHandoff = (jobId: string) =>
+  request<WorkflowHandoff>(`/api/workflow/jobs/${jobId}/handoff`);
+export const resumeWorkflowHandoff = (job: Job) =>
+  request<Job>(`/api/workflow/jobs/${job.id}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: job.revision }),
   });

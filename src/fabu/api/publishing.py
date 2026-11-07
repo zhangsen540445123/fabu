@@ -136,7 +136,8 @@ def targets(job_id: str, request: Request, scope: Scope = "simulation"):
 
 def enqueue(job_id, command, request, action):
     try:
-        require_simulation(command.scope)
+        if action == "submit":
+            require_simulation(command.scope)
         run = coordinator(request.app).status(command.snapshot_digest, command.scope)
         if run["job_id"] != job_id:
             raise ValueError("Snapshot is for another task")
@@ -205,3 +206,26 @@ def create_workflow(command: WorkflowRequest, request: Request):
         raise HTTPException(
             409, "流程条件不满足：核对模板、账号、话题、时间；真实自动发布尚未解锁"
         ) from exc
+
+
+class HandoffResume(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=1)
+
+
+@router.get("/workflow/jobs/{job_id}/handoff")
+def handoff_status(job_id: str, request: Request):
+    try:
+        return request.app.state.publication_profiles.handoff_status(job_id)
+    except (ValueError, KeyError) as exc:
+        raise conflict(exc) from exc
+
+
+@router.post("/workflow/jobs/{job_id}/resume")
+def resume_handoff(job_id: str, command: HandoffResume, request: Request):
+    try:
+        return request.app.state.publication_profiles.resume_handoff(
+            job_id, command.expected_revision
+        )
+    except (ValueError, KeyError) as exc:
+        raise conflict(exc) from exc

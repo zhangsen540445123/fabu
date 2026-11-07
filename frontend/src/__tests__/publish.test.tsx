@@ -5,6 +5,8 @@ import TargetStatus from "../components/TargetStatus";
 import PublishForm from "../components/PublishForm";
 const api = vi.hoisted(() => ({
   getAccounts: vi.fn(),
+  getWorkflowHandoff: vi.fn(),
+  resumeWorkflowHandoff: vi.fn(),
   getPublicationProfiles: vi.fn(),
   createWorkflowJob: vi.fn(),
   getTargetStatus: vi.fn(),
@@ -229,4 +231,107 @@ it("new task selects reusable profile and native schedule without later publish 
     mode: "native_schedule",
     scheduled_at_utc: "2027-01-02T12:30:00.000Z",
   });
+});
+
+it("live reconciliation keeps the selected scope without enabling submission", async () => {
+  api.getTargetStatus.mockImplementation((_id, scope) =>
+    Promise.resolve({
+      ...run,
+      scope,
+      can_submit: false,
+      can_reconcile: true,
+      targets: [{ ...target, state: "UNKNOWN" }],
+    }),
+  );
+  render(<PublishForm job={job} refresh={async () => {}} />);
+  await screen.findByRole("button", { name: "查询对账（不重投）" });
+  fireEvent.change(screen.getByLabelText("发布环境"), {
+    target: { value: "live" },
+  });
+  await waitFor(() =>
+    expect(api.getTargetStatus).toHaveBeenLastCalledWith("job", "live"),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "查询对账（不重投）" }),
+  );
+  await waitFor(() =>
+    expect(api.reconcilePublication).toHaveBeenCalledWith(
+      "job",
+      run.snapshot_digest,
+      "live",
+    ),
+  );
+  expect(api.submitPublication).not.toHaveBeenCalled();
+});
+it("interrupted workflow resumes only after explicit request using current revision", async () => {
+  const paused = {
+    ...job,
+    state: "PAUSED",
+    revision: 7,
+    pause_reason: "handoff_interrupted",
+    spec: { ...job.spec, publication_profile_id: "profile" },
+  };
+  api.getWorkflowHandoff.mockResolvedValue({
+    state: "PAUSED",
+    error_code: "handoff_interrupted",
+    can_resume: true,
+  });
+  api.resumeWorkflowHandoff.mockResolvedValue({
+    ...paused,
+    state: "READY",
+    revision: 8,
+  });
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  render(<PublishForm job={paused} refresh={refresh} />);
+  const button = await screen.findByRole("button", {
+    name: "恢复自动衔接（仿真）",
+  });
+  expect(api.resumeWorkflowHandoff).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  await waitFor(() =>
+    expect(api.resumeWorkflowHandoff).toHaveBeenCalledWith(paused),
+  );
+  expect(refresh).toHaveBeenCalled();
+  expect(api.submitPublication).not.toHaveBeenCalled();
+});
+it("workflow with uncertain side effects has no reset button", async () => {
+  api.getWorkflowHandoff.mockResolvedValue({
+    state: "PAUSED",
+    error_code: "workflow_preflight_failed",
+    can_resume: false,
+  });
+  render(
+    <PublishForm
+      job={{
+        ...job,
+        state: "PAUSED",
+        spec: { ...job.spec, publication_profile_id: "profile" },
+      }}
+      refresh={async () => {}}
+    />,
+  );
+  await waitFor(() =>
+    expect(api.getWorkflowHandoff).toHaveBeenCalledWith("job"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "恢复自动衔接（仿真）" }),
+  ).not.toBeInTheDocument();
+  expect(api.resumeWorkflowHandoff).not.toHaveBeenCalled();
+});
+it("reconciliation HTTP body carries explicit live scope", async () => {
+  const actual = await vi.importActual<typeof import("../api")>("../api");
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue({ ok: true, json: async () => ({}) });
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    await actual.reconcilePublication("job", run.snapshot_digest, "live");
+    expect(fetcher.mock.calls[0][0]).toBe("/api/jobs/job/reconcile");
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({
+      snapshot_digest: run.snapshot_digest,
+      scope: "live",
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

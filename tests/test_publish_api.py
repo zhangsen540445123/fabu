@@ -554,3 +554,184 @@ def test_submitted_targets_can_refresh_final_state_without_resubmission(
         final = client.get(f"/api/jobs/{run['job_id']}/targets").json()
         assert [t["state"] for t in final["targets"]] == ["PUBLISHED"] * 3
         assert len([c for c in publisher.calls if c[0] == "submit"]) == before
+
+
+@pytest.mark.parametrize(
+    "version, query_error, expected_calls",
+    [
+        ("3.2.32", False, ["version", ("details", "existing-provider-id")]),
+        ("unsupported", False, ["version"]),
+        ("3.2.32", True, ["version", ("details", "existing-provider-id")]),
+    ],
+)
+def test_existing_live_attempt_can_be_queried_without_unlocking_writes(
+    publish_app, publishing_context, synthetic_cli_package, version, query_error, expected_calls
+):
+    import threading
+
+    from fabu.domain import TargetAttempt
+    from fabu.publishing.models import PublishSnapshot
+    from fabu.worker import Worker
+
+    client, headers = login(publish_app)
+    connection = {
+        "package_root": str(synthetic_cli_package),
+        "api_key": "synthetic-query-only",
+        "local_client_id": "synthetic-client",
+    }
+    assert (
+        client.put("/api/publishing/connection", json=connection, headers=headers).status_code
+        == 200
+    )
+    config = publishing_context[6]
+    with publishing_context[0].transaction() as db:
+        for a in config.accounts:
+            db.execute(
+                "INSERT INTO publication_catalog VALUES ('live',?,?,?,?)",
+                (
+                    a.account.account_id,
+                    a.account.model_dump_json(),
+                    a.category.model_dump_json() if a.category else None,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+    command = draft(publishing_context, scope="live")
+    for item, a in zip(command["accounts"], config.accounts, strict=True):
+        item["account_id"] = a.account.account_id
+    job_id = publishing_context[4].id
+    saved = client.put(f"/api/jobs/{job_id}/publication", json=command, headers=headers).json()
+    run = client.post(
+        "/api/publish/preflight",
+        json={"job_id": job_id, "expected_revision": saved["revision"], "scope": "live"},
+        headers=headers,
+    ).json()
+    queue = publish_app.state.publication_queue
+    internal = queue.get_run(run["snapshot_digest"], "live")
+    snap = PublishSnapshot.model_validate_json(internal["snapshot_json"])
+    attempt = TargetAttempt(
+        job_id=job_id,
+        revision=snap.content_revision,
+        target_id=snap.targets[0].account.account_id,
+        payload_digest=snap.digest,
+        provider_task_id="existing-provider-id",
+        state="UNKNOWN",
+    )
+    publishing_context[0].record_attempt(attempt)
+    with publishing_context[0].transaction() as db:
+        db.execute(
+            "INSERT INTO publication_attempt_links VALUES (?,?,0,NULL,0)",
+            (attempt.id, internal["id"]),
+        )
+        db.execute("UPDATE publication_runs SET state='PAUSED' WHERE id=?", (internal["id"],))
+        db.execute("UPDATE jobs SET state='PAUSED',owner_worker_id=NULL WHERE id=?", (job_id,))
+    calls = []
+
+    class ReadOnly:
+        def query(self, operation):
+            calls.append(operation)
+            return {"version": version}
+
+        def details(self, identifier):
+            calls.append(("details", identifier))
+            if query_error:
+                raise RuntimeError("synthetic provider timeout")
+            return {"state": "success"}
+
+    publish_app.state.readonly_cli_factory = lambda *args: ReadOnly()
+    # Real reconciliation must not construct FakePublisher or a write-capable CliPublisher.
+    queue.publisher_factory = lambda *args: (_ for _ in ()).throw(
+        AssertionError("Write publisher must not be constructed")
+    )
+    from unittest.mock import patch
+
+    with patch.object(publish_app.state.media_controller, "status", return_value={"running": True}):
+        response = client.post(
+            f"/api/jobs/{job_id}/reconcile",
+            json={"snapshot_digest": snap.digest, "scope": "live"},
+            headers=headers,
+        )
+        assert response.status_code == 202
+    with Worker(publishing_context[0]) as worker:
+        queue.process_next(worker, threading.Event(), lambda **state: None)
+    assert calls == expected_calls
+    assert [a.state for a in publishing_context[0].attempts(job_id)] == ["UNKNOWN"]
+    assert not client.get(f"/api/jobs/{job_id}/targets?scope=live").json()["can_submit"]
+    assert (
+        client.post(
+            f"/api/jobs/{job_id}/submit",
+            json={"snapshot_digest": snap.digest, "scope": "live"},
+            headers=headers,
+        ).status_code
+        == 409
+    )
+
+
+def test_details_readonly_command_is_literal_and_cannot_invoke_write(tmp_path, monkeypatch):
+    import json
+
+    from fabu.diagnostics import ReadOnlyCli
+    from fabu.tools import CommandResult
+
+    exe = tmp_path / "yxer.exe"
+    exe.write_bytes(b"synthetic")
+    config = tmp_path / "auth.json"
+    config.write_text("{}")
+    calls = []
+
+    def run(spec, cancel):
+        calls.append(spec.args)
+        return CommandResult(
+            exit_code=0, stdout=json.dumps({"ok": True, "data": {}}).encode(), stderr=b""
+        )
+
+    monkeypatch.setattr("fabu.diagnostics.run_command", run)
+    reader = ReadOnlyCli(exe, config, tmp_path)
+    assert reader.details("known-id") == {}
+    assert calls == [["query", "details", "known-id", "--json"]]
+    with pytest.raises(ValueError):
+        reader.details("--publish")
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "fault", ["canceled", "timed_out", "output_limit_exceeded", "rejected", "shape"]
+)
+def test_readonly_details_rejects_incomplete_or_unusable_responses(tmp_path, monkeypatch, fault):
+    import json
+
+    from fabu.diagnostics import ReadOnlyCli
+    from fabu.tools import CommandResult
+
+    exe = tmp_path / "yxer.exe"
+    exe.write_bytes(b"not executed")
+    config = tmp_path / "auth.json"
+    config.write_text("{}")
+    raw = {"ok": fault != "rejected", "data": [] if fault == "shape" else {}}
+    flags = {fault: True} if fault in {"canceled", "timed_out", "output_limit_exceeded"} else {}
+    monkeypatch.setattr(
+        "fabu.diagnostics.run_command",
+        lambda spec, cancel: CommandResult(
+            exit_code=0, stdout=json.dumps(raw).encode(), stderr=b"", **flags
+        ),
+    )
+    reader = ReadOnlyCli(exe, config, tmp_path)
+    with pytest.raises((ValueError, RuntimeError)):
+        reader.details("existing-id")
+
+
+def test_readonly_canceled_before_start_does_not_spawn_process(tmp_path, monkeypatch):
+    from fabu.diagnostics import ReadOnlyCli
+
+    exe = tmp_path / "yxer.exe"
+    exe.write_bytes(b"not executed")
+    config = tmp_path / "auth.json"
+    config.write_text("{}")
+
+    def forbidden(*args):
+        pytest.fail("canceled read must not launch any subprocess")
+
+    monkeypatch.setattr("fabu.diagnostics.run_command", forbidden)
+    reader = ReadOnlyCli(exe, config, tmp_path)
+    reader.cancel.set()
+    with pytest.raises(RuntimeError):
+        reader.details("existing-id")

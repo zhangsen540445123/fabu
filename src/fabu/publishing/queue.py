@@ -9,19 +9,26 @@ from fabu.publishing.service import busy, public_run, require_simulation
 
 
 class PublicationQueue:
-    def __init__(self, store, authority, coordinator_factory, wake):
+    def __init__(self, store, authority, coordinator_factory, wake, readonly_factory=None):
         self.store, self.authority = store, authority
         self.coordinator_factory, self.wake = coordinator_factory, wake
         self.publisher_factory = lambda authority, cancel: FakePublisher(authority, cancel=cancel)
         self._publishers = {}
+        self.readonly_factory = readonly_factory
+
+    def _validate_action(self, action, scope):
+        if action not in {"submit", "reconcile"} or scope not in {"live", "simulation"}:
+            raise ValueError("Unknown publication action or scope")
+        if action == "submit":
+            require_simulation(scope)
+        elif scope == "live" and self.readonly_factory is None:
+            raise ValueError("Read-only reconciliation is not configured")
 
     def get_run(self, digest, scope):
         return self.coordinator_factory(None).status(digest, scope)
 
     def enqueue(self, run, action):
-        require_simulation(run["scope"])
-        if action not in {"submit", "reconcile"}:
-            raise ValueError("Unknown publication action")
+        self._validate_action(action, run["scope"])
         # Capabilities/immutability are checked again by the coordinator at execution time.
         public = public_run(self.store, run)
         if not public["can_submit" if action == "submit" else "can_reconcile"]:
@@ -92,18 +99,23 @@ class PublicationQueue:
             job_id=command["job_id"], operation_id=command["id"], kind="publishing", percent=None
         )
         try:
-            require_simulation(command["scope"])
+            self._validate_action(command["action"], command["scope"])
+            if command["scope"] != run["scope"]:
+                raise ValueError("Command scope does not match the run")
             if cancel.is_set():
                 raise ValueError("Canceled before publication")
             coordinator = self.coordinator_factory(worker)
             snapshot = coordinator._snapshot(run)
-            publisher = self._publishers.get(run["id"])
-            if publisher is None:
-                publisher = self.publisher_factory(self.authority, cancel)
-                self._publishers[run["id"]] = publisher
-            publisher.cancel = cancel
+            if command["scope"] == "live":
+                publisher = self.readonly_factory(cancel)
+            else:
+                publisher = self._publishers.get(run["id"])
+                if publisher is None:
+                    publisher = self.publisher_factory(self.authority, cancel)
+                    self._publishers[run["id"]] = publisher
+                publisher.cancel = cancel
             if command["action"] == "reconcile":
-                coordinator.reconcile(snapshot.digest, "simulation", publisher)
+                coordinator.reconcile(snapshot.digest, command["scope"], publisher)
             else:
                 permit = self.authority.issue(
                     snapshot,

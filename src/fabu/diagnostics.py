@@ -73,6 +73,7 @@ class ReadOnlyCli:
         self.executable = executable
         self.config = config
         self.project_dir = project_dir
+        self.cancel = threading.Event()
 
     def query(self, operation: str) -> dict:
         if operation == "entitlements":
@@ -92,6 +93,14 @@ class ReadOnlyCli:
         )
         if raw.get("ok") is not True or not isinstance(raw.get("data"), dict):
             raise ValueError("Category query did not return canonical evidence")
+        return raw["data"]
+
+    def details(self, provider_task_id: str) -> dict:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", provider_task_id):
+            raise ValueError("Invalid existing provider task identifier")
+        raw = self._execute(["query", "details", provider_task_id, "--json"], True)
+        if raw.get("ok") is not True or not isinstance(raw.get("data"), dict):
+            raise ValueError("Details query did not return usable data")
         return raw["data"]
 
     def _execute(self, args, needs_config):
@@ -115,8 +124,15 @@ class ReadOnlyCli:
             env=env,
             timeout_s=30,
         )
-        result = run_command(spec, threading.Event())
-        if result.exit_code != 0 or result.timed_out or result.output_limit_exceeded:
+        if self.cancel.is_set():
+            raise RuntimeError("Read-only query canceled")
+        result = run_command(spec, self.cancel)
+        if (
+            result.exit_code != 0
+            or result.timed_out
+            or result.canceled
+            or result.output_limit_exceeded
+        ):
             raise RuntimeError("CLI read-only query did not complete successfully")
         raw = json.loads(result.stdout.decode("utf-8-sig"))
         if not isinstance(raw, dict):

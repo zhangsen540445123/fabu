@@ -2,6 +2,7 @@
 
 import time
 
+import pytest
 import test_publish_api
 from publishing import conftest as publishing_fixtures
 from test_api_security import login
@@ -209,3 +210,148 @@ def test_expired_workflow_never_changes_to_immediate(publish_app, publishing_con
         headers=headers,
     )
     assert response.status_code == 409
+
+
+def interrupted_handoff(publish_app, context, client, headers):
+    from datetime import UTC, datetime
+
+    p = profile(client, headers, context)
+    created = client.post(
+        "/api/workflow/jobs", json=workflow(context, p["id"]), headers=headers
+    ).json()
+    ready_clone(context, created)
+    with context[0].transaction() as db:
+        db.execute(
+            "INSERT INTO workflow_handoffs VALUES (?,?,'PREPARING',NULL,?)",
+            (created["id"], created["content_revision"], datetime.now(UTC).isoformat()),
+        )
+    publish_app.state.publication_profiles.recover_interrupted()
+    return context[0].get(created["id"])
+
+
+def test_interrupted_handoff_can_resume_same_content_once_with_explicit_request(
+    publish_app, publishing_context
+):
+    client, headers = login(publish_app)
+    job = interrupted_handoff(publish_app, publishing_context, client, headers)
+    state = client.get(f"/api/workflow/jobs/{job.id}/handoff").json()
+    assert state["can_resume"] and state["state"] == "PAUSED"
+    resumed = client.post(
+        f"/api/workflow/jobs/{job.id}/resume",
+        json={"expected_revision": job.revision},
+        headers=headers,
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["content_revision"] == job.content_revision
+    assert resumed.json()["state"] == "READY"
+    assert (
+        client.post(
+            f"/api/workflow/jobs/{job.id}/resume",
+            json={"expected_revision": job.revision},
+            headers=headers,
+        ).status_code
+        == 409
+    )
+    controller = publish_app.state.media_controller
+    controller.start()
+    try:
+        deadline = time.monotonic() + 7
+        while time.monotonic() < deadline:
+            if client.get(f"/api/jobs/{job.id}/targets").json()["state"] == "COMPLETE":
+                break
+            time.sleep(0.03)
+        assert len(publishing_context[0].attempts(job.id)) == 3
+    finally:
+        controller.stop()
+
+
+def test_handoff_resume_cannot_bypass_uncertain_external_effects(publish_app, publishing_context):
+    from datetime import UTC, datetime
+
+    client, headers = login(publish_app)
+    job = interrupted_handoff(publish_app, publishing_context, client, headers)
+    with publishing_context[0].transaction() as db:
+        db.execute(
+            "INSERT INTO upload_attempts VALUES ('unknown-upload','simulation','video',"
+            "?,?,'Z6imSiJLd9Q','UNKNOWN',NULL,?,?)",
+            ("a" * 64, "b" * 64, datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()),
+        )
+    assert not client.get(f"/api/workflow/jobs/{job.id}/handoff").json()["can_resume"]
+    assert (
+        client.post(
+            f"/api/workflow/jobs/{job.id}/resume",
+            json={"expected_revision": job.revision},
+            headers=headers,
+        ).status_code
+        == 409
+    )
+    assert publishing_context[0].get(job.id).state == "PAUSED"
+
+
+def test_canceled_handoff_is_not_revived(publish_app, publishing_context):
+    client, headers = login(publish_app)
+    job = interrupted_handoff(publish_app, publishing_context, client, headers)
+    canceled = publishing_context[0].transition(job.id, job.revision, "CANCELED", "user_canceled")
+    assert not client.get(f"/api/workflow/jobs/{job.id}/handoff").json()["can_resume"]
+    assert (
+        client.post(
+            f"/api/workflow/jobs/{job.id}/resume",
+            json={"expected_revision": canceled.revision},
+            headers=headers,
+        ).status_code
+        == 409
+    )
+
+
+@pytest.mark.parametrize("restriction", ["expired", "inactive_account", "attempt", "frozen"])
+def test_interrupted_handoff_rechecks_requirements_without_requeue(
+    publish_app, publishing_context, restriction
+):
+    import json
+
+    from fabu.domain import TargetAttempt
+
+    client, headers = login(publish_app)
+    job = interrupted_handoff(publish_app, publishing_context, client, headers)
+    store = publishing_context[0]
+    with store.transaction() as db:
+        if restriction == "expired":
+            spec = job.spec.model_dump(mode="json")
+            spec.update(publish_mode="native_schedule", scheduled_at_utc="2020-01-01T00:00:00Z")
+            db.execute("UPDATE jobs SET spec_json=? WHERE id=?", (json.dumps(spec), job.id))
+        elif restriction == "inactive_account":
+            # Simulation catalog is generated, so alter the immutable profile to reference
+            # an unavailable stable ID rather than adding a second test-only catalog.
+            row = db.execute(
+                "SELECT config_json FROM publication_profiles WHERE id=?",
+                (job.spec.publication_profile_id,),
+            ).fetchone()
+            config = json.loads(row[0])
+            config["accounts"][0]["account"]["account_id"] = "unavailable-account"
+            db.execute(
+                "UPDATE publication_profiles SET config_json=? WHERE id=?",
+                (json.dumps(config), job.spec.publication_profile_id),
+            )
+        elif restriction == "frozen":
+            db.execute("UPDATE jobs SET content_frozen=1 WHERE id=?", (job.id,))
+    if restriction == "attempt":
+        store.record_attempt(
+            TargetAttempt(
+                job_id=job.id,
+                revision=job.content_revision,
+                target_id="sim-douyin",
+                payload_digest="a" * 64,
+                state="FAILED",
+            )
+        )
+    response = client.post(
+        f"/api/workflow/jobs/{job.id}/resume",
+        json={"expected_revision": job.revision},
+        headers=headers,
+    )
+    assert response.status_code == 409
+    assert store.get(job.id).state == "PAUSED"
+    with store.connection() as db:
+        assert not db.execute(
+            "SELECT 1 FROM publication_commands WHERE job_id=?", (job.id,)
+        ).fetchone()
