@@ -29,7 +29,9 @@ const reasons: Record<string, string> = {
   preview_required: "等待你检查样片并确认预设",
   source_unavailable: "下载未完成，请检查网络、访问权限与下载工具配置",
   source_authentication_required:
-    "YouTube要求登录验证，程序未读取浏览器登录态；请先确认视频访问权限，再手动重试",
+    "YouTube要求登录验证；请在Chrome中登录或完成验证，再手动重试。登录态不保证能解决所有访问限制",
+  source_browser_session_required:
+    "请在已登录YouTube的Chrome中启用Fabu YouTube助手，确认已连接后手动重试；无需导出Cookie文件",
   node_not_configured: "请在运行设置中配置Node.js可执行文件",
   pipeline_invalid: "处理参数不兼容，请检查截取范围、字幕时刻、素材或字体",
   render_failed: "成片生成未完成，请检查磁盘空间与素材",

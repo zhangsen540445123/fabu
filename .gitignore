@@ -21,3 +21,7 @@
 *.mkv
 *.webm
 *.tsbuildinfo
+
+# Generated local credentials must never be committed.
+*.dpapi
+cookies-*.txt

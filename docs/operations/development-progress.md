@@ -123,3 +123,12 @@
 本轮最终验证：566项Python通过225.56秒，25项Vitest通过、类型/构建通过，隔离Chromium5项通过49.5秒，Ruff108文件通过。增量专项独立审阅未发现Critical/Important；并非对整个产品重新验收。
 
 另通过官方CLI只读查询一条既有B站关联历史记录，并以返回的既有任务集ID查询一次详情：该历史任务集包含3个平台，返回local、success及发布ID/作品链接，但稳定账号ID为空，没有当前Fabu任务的媒体/元数据对应证据，也没有预约时间。因此只作为接口结构观察，不解锁当前任务或真实发布模式。原始历史回执仅以当前Windows用户DPAPI加密保存在忽略目录，公开日志只记结构/哈希，不回显链接、账号身份或凭据。
+
+
+## 2026-11-07：Chrome YouTube 按需登录态接入
+
+用户决定复用常用 Chrome 登录态并把技术选型交给开发者。已增加可选 MV3 扩展、YouTube 限定权限、本机 Native Messaging、DPAPI 加密短时响应、限权临时 Cookie 文件与匿名优先/一次认证重试。未经扩展安装和启用，不读取真实 Cookie。下载相关改动不改变发布授权和来源声明。
+
+最终620项Python通过（220.44秒），26项前端测试与构建通过，42项扩展模拟测试通过，5项隔离浏览器流程通过（41.0秒）；Ruff117文件通过。独立审阅发现的两项P2会话残留问题已用RED/GREEN回归修复并复审关闭，无新增Important发现。真实Windows批处理到native host协议启动另已测试，未读取浏览器凭据。
+
+本机包已部署到 `%LOCALAPPDATA%\Fabu\browser-helper\chrome-extension`，唯一当前用户NativeMessagingHost注册成功。Fabu后台在确认空闲后正常重启，PID19808 -> 27384，ready=true；用户唯一PAUSED任务逐字段未变，media_operations仍0，无发布操作。扩展连接状态仍false，等待用户在Chrome加载并启用；实际网络视频下载验收仍未通过，不能以本轮测试冒充下载成功。

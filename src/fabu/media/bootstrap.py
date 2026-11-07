@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from threading import Event
 
+from fabu.browser_auth.bridge import BrowserSessionClient
 from fabu.media.runtime import MediaTools
 from fabu.media.service import MediaService, ProcessingPaused
 from fabu.media.source import YtDlpRunner, download_source, parse_youtube_url
@@ -21,7 +22,13 @@ def configured_service(app, cancel: Event) -> MediaService:
     def load(job):
         if settings.node_path is None:
             raise ProcessingPaused("node_not_configured")
-        runner = YtDlpRunner(Path(sys.executable), settings.node_path, tools.ffmpeg_path, cancel)
+        runner = YtDlpRunner(
+            Path(sys.executable),
+            settings.node_path,
+            tools.ffmpeg_path,
+            cancel,
+            browser_session=BrowserSessionClient(settings.state_dir / "browser-auth"),
+        )
         return download_source(
             parse_youtube_url(job.spec.source_url),
             settings.data_dir / "downloads" / job.id / parse_youtube_url(job.spec.source_url),

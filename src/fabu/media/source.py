@@ -1,4 +1,4 @@
-"""Bounded single-video download orchestration, with no browser credentials or plugin execution."""
+"""Bounded downloads with optional, explicit YouTube-only native browser sessions."""
 
 import json
 import math
@@ -35,6 +35,10 @@ class SourceUnavailable(ValueError):
 
 class SourceAuthenticationRequired(SourceUnavailable):
     """Downloader explicitly requires authentication; never contains remote error text."""
+
+
+class SourceBrowserSessionRequired(SourceAuthenticationRequired):
+    """Chrome helper is not connected/authorized; no remote text is persisted."""
 
 
 class SelectedFormat(BaseModel):
@@ -158,7 +162,13 @@ def choose_formats(metadata: dict) -> SelectedFormat:
 
 class YtDlpRunner:
     def __init__(
-        self, python_path: Path, node_path: Path, ffmpeg_path: Path, cancel: Event | None = None
+        self,
+        python_path: Path,
+        node_path: Path,
+        ffmpeg_path: Path,
+        cancel: Event | None = None,
+        *,
+        browser_session=None,
     ):
         for path in (python_path, node_path, ffmpeg_path):
             if not path.is_absolute() or not path.is_file() or path.suffix.lower() != ".exe":
@@ -167,8 +177,13 @@ class YtDlpRunner:
         self.node_path = node_path
         self.ffmpeg_path = ffmpeg_path
         self.cancel = cancel or Event()
+        self.browser_session = browser_session
+        self._bound_video = None
+        self._authenticated = False
 
-    def command(self, args: list[str], workspace: Path) -> CommandSpec:
+    def command(
+        self, args: list[str], workspace: Path, *, cookie_path: Path | None = None
+    ) -> CommandSpec:
         flags = [
             "-X",
             "utf8",
@@ -198,6 +213,12 @@ class YtDlpRunner:
             "--no-write-info-json",
             "--no-overwrites",
         ]
+        if cookie_path is not None:
+            if not cookie_path.is_absolute() or not cookie_path.is_file():
+                raise ValueError("Browser cookie file must be an existing private absolute path")
+            assert_no_reparse(cookie_path)
+            index = flags.index("--no-cookies")
+            flags[index : index + 1] = ["--cookies", str(cookie_path)]
         env = {k: v for k, v in os.environ.items() if not k.startswith(("YIXIAOER_", "YXER_"))}
         return CommandSpec(
             executable=self.python_path,
@@ -209,7 +230,58 @@ class YtDlpRunner:
         )
 
     def __call__(self, args: list[str], workspace: Path) -> CommandResult:
-        return run_command(self.command(args, workspace), self.cancel)
+        if self.cancel.is_set():
+            raise SourceUnavailable("download_canceled")
+        if self.browser_session is not None:
+            video_id = parse_youtube_url(args[-1]) if args else None
+            if video_id is None or self._bound_video not in (None, video_id):
+                raise SourceUnavailable("browser_video_scope_mismatch")
+            self._bound_video = video_id
+            if self._authenticated:
+                return self._with_browser(args, workspace)
+        result = run_command(self.command(args, workspace), self.cancel)
+        if self.browser_session is not None and _needs_authentication(result):
+            return self._with_browser(args, workspace)
+        return result
+
+    def _with_browser(self, args, workspace):
+        from fabu.browser_auth.cookies import BrowserSessionError
+
+        if self.cancel.is_set():
+            raise SourceUnavailable("download_canceled")
+        try:
+            with self.browser_session.cookie_file(self._bound_video, self.cancel) as cookie_path:
+                if self.cancel.is_set():
+                    raise BrowserSessionError("browser_request_canceled")
+                result = run_command(
+                    self.command(args, workspace, cookie_path=cookie_path), self.cancel
+                )
+        except (BrowserSessionError, OSError):
+            raise SourceBrowserSessionRequired(
+                "browser_session_required: connect the Chrome YouTube helper"
+            ) from None
+        self._authenticated = result.exit_code == 0 and not (
+            result.canceled or result.timed_out or result.output_limit_exceeded
+        )
+        # yt-dlp may include credential-bearing diagnostics; retain only a static category.
+        message = (
+            b"sign in required"
+            if _needs_authentication(result)
+            else b"authenticated_download_failed"
+        )
+        return result.model_copy(
+            update={
+                "stderr": b"" if self._authenticated else message,
+                "stdout": result.stdout if self._authenticated else b"",
+            }
+        )
+
+
+def _needs_authentication(result):
+    if not result.exit_code or result.timed_out or result.canceled or result.output_limit_exceeded:
+        return False
+    message = result.stderr.decode("utf-8", "replace").lower()
+    return "sign in" in message or "login" in message
 
 
 def _successful(result: CommandResult) -> None:
@@ -217,10 +289,9 @@ def _successful(result: CommandResult) -> None:
         message = result.stderr.decode("utf-8", "replace").lower()
         if "sign in" in message or "login" in message:
             raise SourceAuthenticationRequired(
-                "authentication_required: YouTube requires login verification; "
-                "no browser credentials were read"
+                "authentication_required: YouTube requires login verification"
             )
-        raise SourceUnavailable("download_failed: check network/access; no login state was read")
+        raise SourceUnavailable("download_failed: check network/access and download diagnostics")
 
 
 def download_source(

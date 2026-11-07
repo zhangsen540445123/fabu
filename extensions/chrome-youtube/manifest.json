@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Fabu YouTube 助手",
+  "version": "0.1.0",
+  "minimum_chrome_version": "120",
+  "description": "仅按需向本机 Fabu 提供 YouTube 登录态，无需手动导出 Cookie。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx+1v2978MXx6MkvH4A471qF533ePiSFSZ31MW9l4n83rgow7FAu9zgVKfLwSNWr1Ns+xn++goucKSY+WIoqd2F/4B4ycxFqOF8FL1yqOgMv84zf3PcED6wPxdqBzaWh8IEraPFVIAl7WozE/luKBce+95+LrdLu26R+7xhE2XhS9wzzx2iM+Be94YnNLN07n5zuLF356q7+v5H/q4hEU2il1F2lRhvKUbj+PgNRd445rDVFOOx8D+ndAbiUkk4gJFfG4Lq0GLhKxNxae8txDYM+rltnh5AhXWpZ8Uc3eBKdskBstJHiZlPerd9dg/IowiXB24+ln6qekMGkt8Fb2uQIDAQAB",
+  "permissions": [
+    "cookies",
+    "nativeMessaging",
+    "storage",
+    "alarms"
+  ],
+  "optional_host_permissions": [
+    "https://*.youtube.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.mjs",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Fabu YouTube 助手"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+  },
+  "options_ui": {
+    "page": "popup.html",
+    "open_in_tab": true
+  }
+}

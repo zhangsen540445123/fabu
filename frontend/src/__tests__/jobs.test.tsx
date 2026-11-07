@@ -97,12 +97,21 @@ describe("local dashboard", () => {
       await screen.findByRole("button", { name: job.spec.title }),
     );
     expect(await screen.findByText(/YouTube要求登录验证/)).toHaveTextContent(
-      "未读取浏览器登录态",
+      "登录或完成验证",
     );
     expect(screen.getByText(/YouTube要求登录验证/)).toHaveTextContent(
       "手动重试",
     );
     expect(api.createJob).not.toHaveBeenCalled();
+    expect(api.resumeJob).not.toHaveBeenCalled();
+  });
+
+  it("explains the Chrome helper connection without automatically retrying", async () => {
+    const { default: App } = await import("../App");
+    api.getJobs.mockResolvedValue([{ ...job, state: "PAUSED", pause_reason: "source_browser_session_required" }]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: job.spec.title }));
+    expect(await screen.findByText(/Fabu.*YouTube.*助手/)).toHaveTextContent("手动重试");
     expect(api.resumeJob).not.toHaveBeenCalled();
   });
 

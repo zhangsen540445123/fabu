@@ -1,0 +1,9 @@
+:root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+body { box-sizing: border-box; width: 340px; margin: 0; padding: 18px; }
+h1 { margin: 0; font-size: 19px; }
+#status { padding: 10px; border: 1px solid GrayText; border-radius: 6px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+button { padding: 7px 10px; font: inherit; cursor: pointer; }
+button:disabled { cursor: default; }
+button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+.note { font-size: 12px; color: GrayText; margin-bottom: 0; }

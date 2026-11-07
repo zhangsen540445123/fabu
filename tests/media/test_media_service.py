@@ -142,3 +142,20 @@ def test_untrusted_source_error_text_is_not_used_as_a_pause_reason(context):
     with pytest.raises(ProcessingPaused, match="^source_unavailable$"):
         service.process_job(store.claim_next("test-worker"))
     assert store.get(job.id).pause_reason == "source_unavailable"
+
+
+def test_browser_session_failure_has_actionable_safe_pause_reason(context):
+    from fabu.media.service import ProcessingPaused
+    from fabu.media.source import SourceBrowserSessionRequired
+
+    service, store, _, _, _, job, _ = context
+
+    def fail(_):
+        raise SourceBrowserSessionRequired("browser_session_required")
+
+    service.source_loader = fail
+    with pytest.raises(ProcessingPaused, match="^source_browser_session_required$"):
+        service.process_job(store.claim_next("test-worker"))
+    paused = store.get(job.id)
+    assert paused.pause_reason == "source_browser_session_required"
+    assert paused.source_manifest is None and paused.output_manifest is None
