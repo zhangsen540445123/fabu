@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getPresets: vi.fn(),
+  getHardwareStatus: vi.fn(),
   getCatalog: vi.fn(),
   getAssets: vi.fn(),
   savePreset: vi.fn(),
@@ -72,6 +73,11 @@ const paused = {
 };
 beforeEach(() => {
   vi.resetAllMocks();
+  api.getHardwareStatus.mockResolvedValue({
+    status: "unchecked",
+    stale: true,
+    report: null,
+  });
   api.getPresets.mockResolvedValue([{ version: base, approved: false }]);
   api.getCatalog.mockResolvedValue(catalog);
   api.getAssets.mockResolvedValue([]);
@@ -449,4 +455,50 @@ it("keeps preview generation and approval disabled for frozen READY content", as
   expect(screen.getByRole("button", { name: "确认样片" })).toBeDisabled();
   expect(api.approvePreview).not.toHaveBeenCalled();
   expect(api.resumeJob).not.toHaveBeenCalled();
+});
+
+it("saves_explicit_acceleration_without_rewriting_legacy_preset", async () => {
+  const { default: PipelinePage } = await import("../pages/PipelinePage");
+  api.savePreset.mockImplementation(async (_id, doc) => ({
+    ...base,
+    ...doc,
+    id: "v2",
+    revision: 2,
+  }));
+  render(<PipelinePage />);
+  const mode = await screen.findByLabelText("处理加速");
+  expect(mode).toHaveValue("cpu");
+  fireEvent.change(mode, { target: { value: "auto" } });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "保存新版本" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+  await waitFor(() =>
+    expect(api.savePreset).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({
+        output: expect.objectContaining({
+          acceleration: { mode: "auto", quality: "balanced" },
+        }),
+      }),
+    ),
+  );
+  expect(base.output).toEqual({ crf: 20 });
+});
+
+it("shows_driver_failure_as_last_evidence_not_active_gpu", async () => {
+  const { default: PipelinePage } = await import("../pages/PipelinePage");
+  api.getHardwareStatus.mockResolvedValue({
+    status: "checked",
+    stale: true,
+    report: {
+      available: false,
+      reason: "driver_incompatible",
+      device_name: "NVIDIA GTX 1650",
+      checked_at: "2026-11-07T08:00:00Z",
+    },
+  });
+  render(<PipelinePage />);
+  expect(await screen.findByText(/驱动与当前NVENC编码器不兼容/)).toBeVisible();
+  expect(screen.getByText(/上次检测结果/)).toBeVisible();
 });

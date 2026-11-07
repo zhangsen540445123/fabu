@@ -194,6 +194,7 @@ def test_application_source_factory_wires_optional_youtube_provider(tmp_path, mo
             store=object(),
             presets=object(),
             approvals=object(),
+            hardware=object(),
         )
     )
 
@@ -206,6 +207,7 @@ def test_application_source_factory_wires_optional_youtube_provider(tmp_path, mo
 
     monkeypatch.setattr("fabu.media.bootstrap.download_source", fake_download)
     service = configured_service(app, Event())
+    assert service.hardware is app.state.hardware
     assert (
         service.source_loader(
             SimpleNamespace(id="synthetic-job", spec=SimpleNamespace(source_url=URL))

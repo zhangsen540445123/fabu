@@ -5,11 +5,13 @@ import tempfile
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import uvicorn
 from PIL import Image, ImageDraw
 
 from fabu.api.app import create_app
+from fabu.media.hardware import HardwareReport
 from fabu.media.runtime import MediaTools
 from fabu.media.service import MediaService
 from fabu.media.source import SelectedFormat, SourceManifest, parse_youtube_url
@@ -83,6 +85,14 @@ with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
             tools,
             settings.data_dir / "processed",
             local_source,
+            hardware=SimpleNamespace(
+                check=lambda *_: HardwareReport(
+                    available=False,
+                    reason="no_device",
+                    fingerprint="0" * 64,
+                    checked_at=datetime.now(UTC),
+                )
+            ),
         )
 
     app = create_app(settings, store, enable_worker=True, service_factory=service_factory)

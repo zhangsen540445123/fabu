@@ -1,3 +1,4 @@
+import { hardwareReasons, mediaPhases } from "../mediaLabels";
 import { useEffect, useState } from "react";
 import {
   cancelJob,
@@ -35,6 +36,15 @@ const reasons: Record<string, string> = {
   node_not_configured: "请在运行设置中配置Node.js可执行文件",
   pipeline_invalid: "处理参数不兼容，请检查截取范围、字幕时刻、素材或字体",
   render_failed: "成片生成未完成，请检查磁盘空间与素材",
+  gpu_driver_incompatible:
+    "驱动与当前NVENC编码器不兼容；未进行CPU回退，可切换预设为自动或CPU模式",
+  gpu_no_device: "未检测到可用NVIDIA显卡；请选择自动或CPU模式",
+  gpu_encoder_unavailable: "当前FFmpeg不具备可用NVENC编码器",
+  gpu_probe_failed: "GPU编码探测未通过，任务未开始正式编码",
+  gpu_inventory_unavailable: "无法可靠获取显卡与驱动信息",
+  gpu_environment_changed:
+    "显卡或驱动已变化，冻结任务不会自动切换后端；请创建新内容版本",
+  gpu_probe_required: "硬件能力尚未验证",
   processing_snapshot_changed: "处理环境或素材发生变化，请创建新内容版本",
   processing_canceled: "处理已取消",
   interrupted_processing: "上次处理被中断，可从已验证阶段重新开始",
@@ -141,6 +151,31 @@ function JobDetail({
                 预计时长 {(plan.duration_ms / 1000).toFixed(1)} 秒 ·
                 固定处理快照
               </p>
+              <p>
+                实际执行：
+                {plan.execution?.path === "mixed"
+                  ? "CPU处理 + GPU编码"
+                  : "CPU编码"}{" "}
+                · {plan.actual_encoder ?? "libx265"}
+              </p>
+              {plan.execution && (
+                <p>
+                  {hardwareReasons[plan.execution.reason] ?? "执行配置已冻结"}
+                </p>
+              )}
+              {!!plan.timings && Object.keys(plan.timings).length > 0 && (
+                <details>
+                  <summary>处理阶段耗时</summary>
+                  <dl>
+                    {Object.entries(plan.timings).map(([key, seconds]) => (
+                      <div key={key}>
+                        <dt>{mediaPhases[key] ?? key}</dt>
+                        <dd>{seconds.toFixed(1)} 秒</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </details>
+              )}
               <small className="break">计划 {plan.digest.slice(0, 16)}</small>
             </div>
           </div>
@@ -355,6 +390,12 @@ export default function JobsPage({
                       </span>
                       {job.pause_reason === "preview_required" && (
                         <small>可继续处理，无需样片确认</small>
+                      )}
+                      {status?.job_id === job.id && status.phase && (
+                        <small>
+                          {mediaPhases[status.phase] ?? "处理中"} ·{" "}
+                          {Math.round(status.phase_elapsed_s ?? 0)} 秒
+                        </small>
                       )}
                       {status?.job_id === job.id && status.percent != null && (
                         <div>

@@ -44,6 +44,21 @@ def status(request: Request):
     }
 
 
+@router.get("/media/hardware")
+def hardware_status(request: Request):
+    from fabu.media.runtime import MediaTools
+
+    settings = request.app.state.settings
+    try:
+        tools = MediaTools(
+            ffmpeg_path=settings.tools_dir / "ffmpeg.exe",
+            ffprobe_path=settings.tools_dir / "ffprobe.exe",
+        )
+        return request.app.state.hardware.cached_report(tools)
+    except (OSError, ValueError):
+        return {"status": "unchecked", "stale": True, "report": None}
+
+
 @router.post("/previews", status_code=202)
 def create_preview(command: PreviewRequest, request: Request):
     try:
@@ -191,6 +206,9 @@ def get_plan(job_id: str, request: Request):
             "duration_ms": plan.expected_duration_ms,
             "preset": preset,
             "composition": plan.composition_summary,
+            "execution": plan.execution,
+            "actual_encoder": plan.execution.encoder if plan.execution else "libx265",
+            "timings": (job.output_manifest or {}).get("timings", {}),
             "source_manifest": job.source_manifest,
         }
     except (KeyError, ValueError) as exc:

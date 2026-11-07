@@ -44,6 +44,16 @@ class MediaTools(BaseModel):
     def validate_plan_tools(self, plan):
         if plan.tool_identity and self.identity(force=True) != plan.tool_identity:
             raise PlanInvalid("Media tool build changed; recompile and confirm a fresh preview")
+        if plan.execution and plan.execution.path == "mixed":
+            from fabu.media.encoders import HardwareUnavailable
+            from fabu.media.hardware import environment_fingerprint
+
+            try:
+                fingerprint, _ = environment_fingerprint(self)
+            except (OSError, ValueError, KeyError) as exc:
+                raise HardwareUnavailable("gpu_environment_changed") from exc
+            if fingerprint != plan.execution.device_fingerprint:
+                raise HardwareUnavailable("gpu_environment_changed")
 
     def _run(
         self,
@@ -65,8 +75,10 @@ class MediaTools(BaseModel):
             cancel or Event(),
         )
 
-    def probe(self, args: list[str], cancel: Event | None = None) -> CommandResult:
-        return self._run(self.ffprobe_path, args, cancel, 1800)
+    def probe(
+        self, args: list[str], cancel: Event | None = None, *, timeout_s: int = 1800
+    ) -> CommandResult:
+        return self._run(self.ffprobe_path, args, cancel, timeout_s)
 
     def ffmpeg(
         self,

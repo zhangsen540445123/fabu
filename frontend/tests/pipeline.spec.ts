@@ -18,6 +18,7 @@ test("pipeline editor uses backend ordering and completes a real local media wor
   await expect(page.locator(".app-shell")).toHaveCSS("display", "flex");
   await page.getByRole("button", { name: "处理流水线", exact: true }).click();
   await expect(page.getByText("附加处理全部关闭")).toBeVisible();
+  await page.getByLabel("处理加速").selectOption("auto");
   await page.getByLabel("预设名称").fill("助眠处理 · 验收模板");
   await page.getByRole("button", { name: "添加水平翻转" }).click();
   await page.getByRole("button", { name: "添加画布与装饰区" }).click();
@@ -51,17 +52,22 @@ test("pipeline editor uses backend ordering and completes a real local media wor
   );
   await page.getByRole("button", { name: "保存本地任务" }).click();
   const job = await (await created).json();
-  const row = page
-    .getByRole("row")
-    .filter({
-      has: page.getByRole("button", {
-        name: "沉浸式剪发 · 流水线验收",
-        exact: true,
-      }),
-    });
+  const row = page.getByRole("row").filter({
+    has: page.getByRole("button", {
+      name: "沉浸式剪发 · 流水线验收",
+      exact: true,
+    }),
+  });
   await expect(row.getByText("成片就绪", { exact: true })).toBeVisible({
     timeout: 30000,
   });
+  const actualPlan = await (
+    await page.request.get(`/api/jobs/${job.id}/plan`)
+  ).json();
+  expect(actualPlan.execution.path).toBe("cpu");
+  expect(actualPlan.execution.reason).toBe("no_device");
+  expect(actualPlan.timings.encoding).toBeGreaterThan(0);
+  expect(actualPlan.timings.output_validation).toBeGreaterThan(0);
   expect(approvalRequests).toEqual([]);
   expect(resumeRequests).toEqual([]);
   await page

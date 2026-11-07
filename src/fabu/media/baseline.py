@@ -78,6 +78,9 @@ def build_render_command(
     plan: MediaPlan, candidate: Path, progress: Path, *, graph_path: Path | None = None
 ) -> RenderCommand:
     verify_plan_digest(plan)
+    from fabu.media.encoders import encoder_args
+
+    encoding = encoder_args(plan)
     video_filters = [f for stage in plan.stages for f in stage.video_filters]
     audio_filters = [f for stage in plan.stages for f in stage.audio_filters]
     profile = plan.output_profile
@@ -124,15 +127,7 @@ def build_render_command(
             "-af",
             ",".join(audio_filters),
         ]
-    output = [
-        "-c:v",
-        profile.codec,
-        "-preset",
-        profile.preset,
-        "-crf",
-        str(profile.crf),
-        "-x265-params",
-        "pools=6:frame-threads=2:log-level=error",
+    output = encoding + [
         "-pix_fmt",
         profile.pixel_format,
         "-color_range",

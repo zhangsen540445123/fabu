@@ -139,7 +139,12 @@ class PreviewApprovalStore:
         self, preset: PresetVersion, assets: dict[str, AssetRef], engine_compat_version: str
     ) -> bool:
         try:
-            if self.current_tools and engine_compat_version != self.current_engine():
+            base, separator, execution = engine_compat_version.partition(":execution-1:")
+            if separator and (
+                len(execution) != 64 or any(c not in "0123456789abcdef" for c in execution)
+            ):
+                return False
+            if self.current_tools and base != self.current_engine():
                 return False
             key = self._key(preset, assets, engine_compat_version)
         except (ValueError, KeyError, OSError):

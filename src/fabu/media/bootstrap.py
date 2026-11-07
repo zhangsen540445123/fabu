@@ -46,4 +46,5 @@ def configured_service(app, cancel: Event) -> MediaService:
         tools,
         settings.data_dir / "processed",
         load,
+        hardware=app.state.hardware,
     )

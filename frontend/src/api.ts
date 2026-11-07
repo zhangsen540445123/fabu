@@ -166,6 +166,26 @@ export interface Asset {
   size_bytes: number;
   display_name: string;
 }
+export interface HardwareStatus {
+  status: "unchecked" | "checked";
+  stale: boolean;
+  report: {
+    available: boolean;
+    reason: string;
+    device_name?: string | null;
+    checked_at: string;
+    cuda_fast_path?: boolean;
+  } | null;
+}
+export interface MediaExecution {
+  path: "cpu" | "mixed";
+  encoder: "libx265" | "hevc_nvenc";
+  reason: string;
+  device_name?: string | null;
+}
+export const getHardwareStatus = () =>
+  request<HardwareStatus>("/api/media/hardware");
+
 export interface MediaStatus {
   running: boolean;
   error_code: string | null;
@@ -174,6 +194,8 @@ export interface MediaStatus {
   kind?: string | null;
   percent?: number | null;
   publishing_enabled: boolean;
+  phase?: string | null;
+  phase_elapsed_s?: number | null;
 }
 export interface MediaOperation {
   id: string;
@@ -195,6 +217,9 @@ export interface Preview {
   }[];
 }
 export interface JobPlan {
+  execution?: MediaExecution | null;
+  actual_encoder?: string;
+  timings?: Record<string, number>;
   digest: string;
   output_size: { width: number; height: number };
   duration_ms: number;

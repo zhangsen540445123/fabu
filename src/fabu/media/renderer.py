@@ -42,6 +42,7 @@ def render(
     *,
     tools: MediaTools,
     on_progress: Callable[[float], None] | None = None,
+    on_stage: Callable[[str], None] | None = None,
     min_free_bytes: int = 256 * 1024 * 1024,
 ) -> Path:
     verify_plan_digest(plan)
@@ -99,6 +100,8 @@ def render(
         record.write_text(
             json.dumps({"state": "PROCESSING", "plan_digest": plan.digest}), encoding="utf-8"
         )
+        if on_stage:
+            on_stage("encoding")
         if graph_path:
             result = tools.ffmpeg(command.args, cancel, cwd=resource_dir)
         else:

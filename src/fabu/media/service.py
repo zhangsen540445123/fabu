@@ -1,6 +1,7 @@
 """Preset-driven local rendering with immutable checkpoints and optional quality previews."""
 
 import os
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,8 @@ from fabu.assets import AssetStore, assert_no_reparse, sha256_file
 from fabu.domain import JobSnapshot
 from fabu.media.approvals import PreviewApprovalStore
 from fabu.media.compiler import bind_tool_identity, compile_plan
+from fabu.media.encoders import HardwareUnavailable, bind_execution
+from fabu.media.hardware import HardwareProbe
 from fabu.media.models import (
     InputBundle,
     MediaPlan,
@@ -47,6 +50,8 @@ class MediaService:
         tools: MediaTools,
         workspace: Path,
         source_loader: Callable[[JobSnapshot], SourceManifest],
+        *,
+        hardware: HardwareProbe | None = None,
     ):
         if not workspace.is_absolute():
             raise ValueError("Media workspace must be absolute")
@@ -54,6 +59,7 @@ class MediaService:
         self.store, self.presets, self.assets = store, presets, assets
         self.approvals, self.tools, self.workspace = approvals, tools, workspace
         self.source_loader = source_loader
+        self.hardware = hardware or HardwareProbe(workspace.parent / "hardware")
 
     def _owned(self, db, job):
         current = self.store._snapshot(
@@ -157,12 +163,28 @@ class MediaService:
         *,
         cancel: Event | None = None,
         on_progress: Callable[[float], None] | None = None,
+        on_stage: Callable[[str], None] | None = None,
     ) -> OutputManifest:
         if job.state != "INSPECTING" or not job.owner_worker_id or job.content_frozen:
             raise ValueError("A worker must claim a fresh, unfrozen media task")
         cancel = cancel or Event()
         stage = "source_unavailable"
+        started = time.monotonic()
+        phase_started = started
+        current_phase = None
+        timings = {}
+
+        def phase(name):
+            nonlocal phase_started, current_phase
+            now = time.monotonic()
+            if current_phase:
+                timings[current_phase] = timings.get(current_phase, 0) + now - phase_started
+            current_phase, phase_started = name, now
+            if on_stage and name:
+                on_stage(name)
+
         try:
+            phase("download")
             preset = self.presets.get_version(job.spec.preset_version_id)
             job = self.store.transition(job.id, job.revision, "DOWNLOADING", None)
             source = (
@@ -170,6 +192,7 @@ class MediaService:
                 if job.source_manifest
                 else self.source_loader(job)
             )
+            phase("input_validation")
             if source.video_id != parse_youtube_url(job.spec.source_url):
                 raise PlanInvalid("Downloaded source does not match the requested video")
             for ref in [source.source, source.thumbnail]:
@@ -193,6 +216,24 @@ class MediaService:
                 InputBundle(source=info, assets=refs, asset_media=auxiliary), preset
             )
             plan = bind_tool_identity(plan, preset, self.tools.identity(force=True))
+            with self.store.connection() as db:
+                prior = db.execute(
+                    "SELECT plan_json FROM processing_snapshots "
+                    "WHERE job_id=? AND content_revision=?",
+                    (job.id, job.content_revision),
+                ).fetchone()
+            previous = MediaPlan.model_validate_json(prior[0]) if prior else None
+            intent = plan.output_profile.acceleration
+            report = None
+            if (
+                intent
+                and intent.mode != "cpu"
+                and not (previous and previous.execution and previous.execution.path == "cpu")
+            ):
+                phase("hardware_check")
+                report = self.hardware.check(self.tools, cancel)
+            plan = bind_execution(plan, report, previous=previous, preset=preset)
+            self.approvals.validate_plan_binding(preset, plan)
             job = self._plan_checkpoint(job, source, plan)
             # Selecting this immutable preset authorizes local processing; optional
             # visual review is not a prerequisite and no approval record is fabricated.
@@ -201,14 +242,27 @@ class MediaService:
             directory = self.workspace / job.id / str(job.content_revision)
             assert_no_reparse(directory)
             directory.mkdir(parents=True, exist_ok=True)
+            phase("cache_validation")
             output = self._cache(directory, plan)
             if output is None:
+                phase("input_validation")
                 candidate = render(
-                    plan, directory, cancel, tools=self.tools, on_progress=on_progress
+                    plan,
+                    directory,
+                    cancel,
+                    tools=self.tools,
+                    on_progress=on_progress,
+                    on_stage=phase,
                 )
+                phase("output_validation")
                 output = promote_output(
                     validate_output(candidate, plan, tools=self.tools, cancel=cancel),
                     directory / f"output-{uuid4()}.mp4",
+                )
+                phase(None)
+                timings["total"] = time.monotonic() - started
+                output = output.model_copy(
+                    update={"timings": {key: round(value, 3) for key, value in timings.items()}}
                 )
                 temporary = directory / f"manifest-{uuid4()}.tmp"
                 temporary.write_text(output.model_dump_json(indent=2), encoding="utf-8")
@@ -219,7 +273,7 @@ class MediaService:
             return output
         except Exception as exc:
             current = self.store.get(job.id)
-            code = str(exc) if isinstance(exc, ProcessingPaused) else stage
+            code = str(exc) if isinstance(exc, (ProcessingPaused, HardwareUnavailable)) else stage
             if stage == "source_unavailable" and isinstance(exc, SourceAuthenticationRequired):
                 code = (
                     "source_browser_session_required"

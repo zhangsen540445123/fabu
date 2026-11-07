@@ -77,6 +77,9 @@ def create_app(
         settings.data_dir / "assets", store, legacy_roots=(settings.state_dir / "assets",)
     )
     app.state.presets = PresetStore(store, app.state.assets)
+    from fabu.media.hardware import HardwareProbe
+
+    app.state.hardware = HardwareProbe(settings.state_dir / "hardware")
     app.state.media_tool_identity = lambda: MediaTools(
         ffmpeg_path=app.state.settings.tools_dir / "ffmpeg.exe",
         ffprobe_path=app.state.settings.tools_dir / "ffprobe.exe",

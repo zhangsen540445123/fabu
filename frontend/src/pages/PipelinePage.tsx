@@ -15,6 +15,7 @@ import {
   type ValidationIssue,
 } from "../api";
 import StepList from "../components/StepList";
+import HardwareStatusPanel from "../components/HardwareStatusPanel";
 function documentOf(version: PresetVersion): PresetDocument {
   return {
     name: version.name,
@@ -27,7 +28,7 @@ const blank: PresetDocument = {
   name: "新建处理预设",
   schema_version: 1,
   steps: [],
-  output: { crf: 20 },
+  output: { crf: 20, acceleration: { mode: "auto", quality: "balanced" } },
 };
 export default function PipelinePage({
   onChanged,
@@ -189,6 +190,7 @@ export default function PipelinePage({
       ) : (
         <div className="pipeline-grid">
           <aside className="pipeline-sidebar">
+            <HardwareStatusPanel />
             <section className="panel padded">
               <h2>处理方式</h2>
               <p>
@@ -287,9 +289,40 @@ export default function PipelinePage({
                 </label>
               </div>
               <div className="pipeline-baseline">
+                <label>
+                  处理加速
+                  <select
+                    value={
+                      (doc.output.acceleration as { mode?: string } | undefined)
+                        ?.mode ?? "cpu"
+                    }
+                    disabled={busy}
+                    onChange={(e) =>
+                      setDoc({
+                        ...doc,
+                        output: {
+                          ...doc.output,
+                          acceleration: {
+                            mode: e.target.value,
+                            quality: "balanced",
+                          },
+                        },
+                      })
+                    }
+                  >
+                    <option value="auto">自动加速（不可用时回退CPU）</option>
+                    <option value="gpu">CPU处理 + GPU编码（必须可用）</option>
+                    <option value="cpu">CPU兼容模式</option>
+                  </select>
+                </label>
+                <p>
+                  变更只保存为新预设版本，不修改正在运行的任务。GPU使用独立的NVENC
+                  p5 / CQ20候选配置，不等同于CPU的CRF参数。
+                </p>
                 <span className="badge">固定基础输出</span>
                 <strong>
-                  HEVC · CRF{String(doc.output.crf ?? 20)} · 30fps
+                  HEVC · CPU CRF{String(doc.output.crf ?? 20)} / GPU CQ20 ·
+                  30fps
                 </strong>
                 <p>
                   自动识别横竖比例 · Lanczos缩放 ·
@@ -298,7 +331,7 @@ export default function PipelinePage({
                 <details>
                   <summary>高级输出参数</summary>
                   <label>
-                    CRF质量参数
+                    CPU CRF质量参数
                     <input
                       type="number"
                       min={0}

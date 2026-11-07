@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,22 +34,32 @@ class MediaController:
         self._ready = threading.Event()
         self._cancel = threading.Event()
         self._thread = None
+        self._phase_started = None
         self._state = {
             "running": False,
             "job_id": None,
             "operation_id": None,
             "kind": None,
             "percent": None,
+            "phase": None,
             "error_code": None,
         }
 
     def status(self):
         with self._lock:
-            return dict(self._state)
+            result = dict(self._state)
+            result["phase_elapsed_s"] = (
+                round(time.monotonic() - self._phase_started, 1)
+                if self._phase_started is not None
+                else None
+            )
+            return result
 
     def _set(self, **values):
         with self._lock:
             self._state.update(values)
+            if "phase" in values:
+                self._phase_started = time.monotonic() if values["phase"] else None
 
     def wake(self):
         self._wake.set()
@@ -204,16 +215,19 @@ class MediaController:
                 error="preview_canceled" if self._cancel.is_set() else "preview_failed",
             )
         finally:
-            self._set(job_id=None, operation_id=None, kind=None, percent=None)
+            self._set(job_id=None, operation_id=None, kind=None, percent=None, phase=None)
 
     def _process(self, service, job):
         self._set(job_id=job.id, operation_id=None, kind="processing", percent=None)
         try:
             service.process_job(
-                job, cancel=self._cancel, on_progress=lambda value: self._set(percent=value)
+                job,
+                cancel=self._cancel,
+                on_progress=lambda value: self._set(percent=value),
+                on_stage=lambda value: self._set(phase=value, percent=None),
             )
         finally:
-            self._set(job_id=None, operation_id=None, kind=None, percent=None)
+            self._set(job_id=None, operation_id=None, kind=None, percent=None, phase=None)
 
     def _run(self):
         try:
@@ -262,5 +276,7 @@ class MediaController:
         except Exception:
             self._set(error_code="worker_failed")
         finally:
-            self._set(running=False, job_id=None, operation_id=None, kind=None, percent=None)
+            self._set(
+                running=False, job_id=None, operation_id=None, kind=None, percent=None, phase=None
+            )
             self._ready.set()
