@@ -46,7 +46,11 @@ def gateway_setup(publishing_context, tmp_path):
                 "name": Path(args[1]).name,
             }
         elif args[0] == "validate" or "--dry-run" in args:
-            data = {"publishChannel": "local", "clientId": "synthetic-client"}
+            from cli_contract_support import offline_response
+
+            payload = json.loads(Path(args[3]).read_text(encoding="utf-8"))
+            raw = offline_response(payload, "validate" if args[0] == "validate" else "dry_run")
+            return CommandResult(exit_code=0, stdout=json.dumps(raw).encode(), stderr=b"")
         elif args[0] == "publish":
             data = {
                 "taskSetId": "provider-task-1",

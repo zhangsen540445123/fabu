@@ -13,6 +13,7 @@ from fabu.assets import assert_no_reparse, sha256_file
 from fabu.credentials import CredentialStore, secure_directory
 from fabu.diagnostics import normalize_readonly
 from fabu.publishing.capabilities import CapabilityReport
+from fabu.publishing.cli_contract import matches_local_preflight
 from fabu.publishing.gateway import (
     PLATFORM_NAMES,
     MemoryUploadJournal,
@@ -306,7 +307,10 @@ class CliPublisher:
                 ]:
                     self.authority.validate(permit, snapshot, real=True)
                     raw, good = self._call(command)
-                    if not good or not self._channel(raw, prepared.client_id):
+                    phase = "validate" if command[0] == "validate" else "dry_run"
+                    if not good or not matches_local_preflight(
+                        raw, prepared.payloads[target.account.account_id], phase
+                    ):
                         raise ValueError(
                             "Local-channel preflight is unverified; submission remains blocked"
                         )
