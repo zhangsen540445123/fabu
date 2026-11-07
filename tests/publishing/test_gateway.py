@@ -61,7 +61,9 @@ def gateway_setup(publishing_context, tmp_path):
             data = {}
         return CommandResult(
             exit_code=0,
-            stdout=json.dumps({"ok": True, "version": "3.2.32", "data": data}).encode(),
+            stdout=json.dumps(
+                {"ok": True, "version": "3.2.32", "action": args[0], "data": data}
+            ).encode(),
             stderr=b"",
         )
 

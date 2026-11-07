@@ -14,6 +14,7 @@ from fabu.credentials import CredentialStore, secure_directory
 from fabu.diagnostics import normalize_readonly
 from fabu.publishing.capabilities import CapabilityReport
 from fabu.publishing.cli_contract import matches_local_preflight
+from fabu.publishing.cli_receipts import parse_publish_acknowledgement
 from fabu.publishing.gateway import (
     PLATFORM_NAMES,
     MemoryUploadJournal,
@@ -180,14 +181,6 @@ class CliPublisher:
         finally:
             assert_no_reparse(path)
             path.unlink(missing_ok=True)
-
-    def _channel(self, raw, client):
-        data = raw.get("data")
-        return (
-            isinstance(data, dict)
-            and data.get("publishChannel") == "local"
-            and data.get("clientId") == client
-        )
 
     def preflight(self, snapshot):
         verify_publish_snapshot(snapshot)
@@ -374,34 +367,8 @@ class CliPublisher:
                 return SubmissionReceipt(
                     target_id=target_id, state="UNKNOWN", reason="submission_outcome_unknown"
                 )
-        data = raw.get("data", {})
-        identifier = data.get("taskSetId") if isinstance(data, dict) else None
-        identifier = (
-            identifier if isinstance(identifier, str) and _ID.fullmatch(identifier) else None
-        )
-        if not good:
-            return SubmissionReceipt(
-                target_id=target_id,
-                state="UNKNOWN",
-                provider_task_id=identifier,
-                reason="submission_outcome_unknown",
-            )
-        if not self._channel(raw, prepared.client_id):
-            return SubmissionReceipt(
-                target_id=target_id,
-                state="UNKNOWN",
-                provider_task_id=identifier,
-                reason="channel_mismatch",
-            )
-        if not identifier:
-            return SubmissionReceipt(
-                target_id=target_id, state="UNKNOWN", reason="missing_provider_identity"
-            )
-        return SubmissionReceipt(
-            target_id=target_id,
-            state="PROVIDER_ACCEPTED",
-            provider_task_id=identifier,
-            actual_channel="local",
+        return parse_publish_acknowledgement(
+            raw, transport_ok=good, target_id=target_id, client_id=prepared.client_id
         )
 
     def reconcile(self, attempt):
