@@ -51,3 +51,7 @@ No automatic old-job replay, no paid/cloud-publish fallback, no secrets in publi
 - [ ] User supplies an unpublished authorized YouTube URL and title for an explicit new three-platform run.
 - [ ] Observe real download → processing → upload → three accepted submissions through the application, then independently verify platform video durations (especially Bilibili).
 - Existing Bilibili 2-second root cause remains unresolved; neither offline tests nor provider success closes that issue. Native scheduling remains unavailable until separately validated.
+
+
+### Additional production-boundary evidence
+Official installed CLI (not a substitute transport) accepted current production-generated requests in 3 structural validations, 3 uploaded-metadata validations and 3 local dry-runs. Zero uploads/posts and no durable side-effect count changes. Historical CDN HEAD matches 1,247,459,987-byte local output; ETag matches local MD5 and three bounded samples match. This narrows Bilibili diagnosis without claiming platform/video verification or a new live E2E acceptance.
