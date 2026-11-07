@@ -94,9 +94,15 @@ def test_stop_only_terminates_owned_processes(runtime_settings):
     )
     try:
         result = launch(runtime_settings, open_browser=False)
+        parent = psutil.Process(result.pid).parent()
+        runtime_parent = parent if parent and "fabu.runtime" in parent.cmdline() else None
         assert stop_owned_runtime(runtime_settings)
         assert innocent.poll() is None
         assert not psutil.pid_exists(result.pid)
+        if runtime_parent:
+            runtime_parent.wait(timeout=5)
+        with socket.socket() as sock:
+            assert sock.connect_ex(("127.0.0.1", runtime_settings.port)) != 0
         assert not stop_owned_runtime(runtime_settings)
     finally:
         innocent.terminate()
@@ -223,8 +229,6 @@ def test_powershell_scripts_work_with_spaces_and_reuse_instance(runtime_settings
             [
                 str(shell),
                 "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
                 "-File",
                 str(root / "scripts" / name),
                 "-StateDir",

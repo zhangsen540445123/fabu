@@ -20,7 +20,7 @@ from uuid import uuid4
 import psutil
 import pywintypes
 import win32crypt
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from fabu.assets import assert_no_reparse
 from fabu.credentials import secure_directory
@@ -314,8 +314,14 @@ def main():
     parser.add_argument("action", choices=["start", "stop", "check"])
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    settings = load_settings()
     try:
+        env = dict(os.environ)
+        if args.action == "stop":
+            # Control identity is state_dir + port, not media/tool configuration.
+            # A moved Node executable or invalid data path must not block shutdown.
+            for name in ("FABU_DATA_DIR", "FABU_TOOLS_DIR", "FABU_NODE_PATH", "FABU_TEST_MODE"):
+                env.pop(name, None)
+        settings = load_settings(env)
         if args.action == "start":
             result = launch(settings, open_browser=not args.no_browser).model_dump(mode="json")
         elif args.action == "stop":
@@ -323,6 +329,20 @@ def main():
         else:
             result = check_installation(settings)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    except ValidationError as exc:
+        # Pydantic's string form includes input values; never echo configuration secrets.
+        fields = sorted(
+            {
+                "FABU_" + str(error["loc"][0]).upper()
+                for error in exc.errors(
+                    include_input=False, include_context=False, include_url=False
+                )
+                if error["loc"] and error["loc"][0] in Settings.model_fields
+            }
+        )
+        names = ", ".join(fields) or "FABU_* environment variables and local settings"
+        print(json.dumps({"error": "Invalid launcher configuration; check " + names}))
+        raise SystemExit(1) from None
     except (ValueError, OSError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False))
         raise SystemExit(1) from None

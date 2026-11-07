@@ -18,7 +18,8 @@ if ($ToolsDir) { $env:FABU_TOOLS_DIR = [System.IO.Path]::GetFullPath($ToolsDir) 
 if ($NodePath) { $env:FABU_NODE_PATH = [System.IO.Path]::GetFullPath($NodePath) }
 if ($Port) { $env:FABU_PORT = [string]$Port }
 $env:PYTHONUTF8 = '1'
+# Isolated imports use this venv, not the caller's directory or stale PYTHONPATH.
 # Python launches an owned CREATE_NO_WINDOW runtime. No visible helper window or shell command.
-if ($NoBrowser) { & $python -m fabu.launcher start --no-browser }
-else { & $python -m fabu.launcher start }
+if ($NoBrowser) { & $python -I -X utf8 -m fabu.launcher start --no-browser }
+else { & $python -I -X utf8 -m fabu.launcher start }
 exit $LASTEXITCODE

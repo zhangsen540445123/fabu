@@ -9,6 +9,7 @@ if ($ToolsDir) { $env:FABU_TOOLS_DIR = [System.IO.Path]::GetFullPath($ToolsDir) 
 if ($NodePath) { $env:FABU_NODE_PATH = [System.IO.Path]::GetFullPath($NodePath) }
 if ($Port) { $env:FABU_PORT = [string]$Port }
 $env:PYTHONUTF8 = '1'
+# Isolated imports use this venv, not the caller's directory or stale PYTHONPATH.
 # Read-only diagnostics: no downloads, upgrades, credential queries, or publication.
-& $python -m fabu.launcher check
+& $python -I -X utf8 -m fabu.launcher check
 exit $LASTEXITCODE

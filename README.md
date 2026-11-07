@@ -17,6 +17,14 @@ Windows单用户本地网页与独立后台Worker：单条YouTube输入、原封
 
 ## 当前机器启动
 
+本机桌面已有 **“启动 Fabu”** 和 **“停止 Fabu”** 快捷方式，可直接双击，无需手输参数。
+
+- 启动入口：`D:\auto-deploy\scripts\start-fabu.bat`，启动或复用服务并自动打开带一次性认证的工作台。
+- 停止入口：`D:\auto-deploy\scripts\stop-fabu.bat`，只停止经身份校验的本机 Fabu 服务，不按进程名强杀。
+- 两个 BAT 均固定使用当前 Windows 用户的 `%LOCALAPPDATA%\Fabu`、`127.0.0.1:8765`；屏蔽旧终端遗留的 `FABU_*` 配置，媒体/工具设置仍以工作台保存的配置为准。
+- 不需要管理员权限，也不改变 PowerShell 执行策略。成功后命令窗口关闭；失败时窗口保留供查看错误。
+- 高级用途（另一份状态目录或端口）仍可使用下列 PowerShell 脚本参数。
+
 以下命令应在自己的PowerShell终端运行；`$Project`按实际项目所在位置修改。
 
 ```powershell
