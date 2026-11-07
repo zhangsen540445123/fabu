@@ -69,3 +69,13 @@ $env:FABU_TEST_YIXIAOER_PACKAGE = 'C:\Users\77465\AppData\Local\Fabu\cli-probe-2
 下载器明确返回登录验证要求时，用固定的类型化异常传递为 `source_authentication_required`。任务详情说明YouTube要求登录、未读取浏览器登录态，需先确认访问权限后手动重试。任意外部错误文字不能成为数据库中的暂停原因，普通故障仍显示通用下载失败。
 
 此提示不解决YouTube的访问限制，不会导入cookie、自动登录或自动重试。用户既有暂停任务的历史原因不做猜测性迁移；后台未重启，新的原因传播在下次正常启动后用于新执行。
+
+## 2026-11-07 上游修复路径核查
+
+- 通过npm官方registry只读获取该包的latest元数据，当时仍为3.2.32；未安装、升级或修改包。此记录不是永久的最新版声明。
+- 公开仓库main解析到a2722c6095f57abf2e345dca637bdded44fa34df。读取该提交的preflight.go并核对Git blob SHA：通用HTTP(S)字符串检查遍历表单，例外列表没有B站contentSourceUrl。此源码行为与此前安装包的离线拒绝一致，未发现可直接采用的官方修复。
+- 用contentSourceUrl关键词检索公开issues没有命中，不代表不存在用其他文字报告的问题。
+- 本机二进制内嵌构建信息可见模块路径及3.2.32的ldflags版本赋值，但没有检出的vcs.revision/vcs.time/vcs.modified记录。因此仍不能把公开main当作已证明一一对应的安装包源码。
+- 不能靠去掉协议、换字段、塞入raw、删除来源或改声明绕过校验；没有执行这类尝试，也没有编译/替换第三方二进制。采用修改版CLI或其他接入路线需要单独对齐，而不是默认回退。
+
+公开证据缓存与元数据见忽略目录upstream-url-contract-recheck；下载的上游源码仅用于阅读，不纳入Fabu构建或Git提交。当前没有正在运行的验收测试可以等待；用户工作台的空闲运行也不构成验收进度。
