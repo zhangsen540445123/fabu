@@ -635,7 +635,7 @@ def test_existing_live_attempt_can_be_queried_without_unlocking_writes(
             calls.append(("details", identifier))
             if query_error:
                 raise RuntimeError("synthetic provider timeout")
-            return {"state": "success"}
+            return [{"id": "existing-task", "status": "success"}]
 
     publish_app.state.readonly_cli_factory = lambda *args: ReadOnly()
     # Real reconciliation must not construct FakePublisher or a write-capable CliPublisher.
@@ -709,7 +709,7 @@ def test_readonly_details_rejects_incomplete_or_unusable_responses(tmp_path, mon
     exe.write_bytes(b"not executed")
     config = tmp_path / "auth.json"
     config.write_text("{}")
-    raw = {"ok": fault != "rejected", "data": [] if fault == "shape" else {}}
+    raw = {"ok": fault != "rejected", "data": "not-an-object" if fault == "shape" else {}}
     flags = {fault: True} if fault in {"canceled", "timed_out", "output_limit_exceeded"} else {}
     monkeypatch.setattr(
         "fabu.diagnostics.run_command",
@@ -738,3 +738,50 @@ def test_readonly_canceled_before_start_does_not_spawn_process(tmp_path, monkeyp
     reader.cancel.set()
     with pytest.raises(RuntimeError):
         reader.details("existing-id")
+
+
+@pytest.mark.parametrize("tasks", [[], [{"id": "task_1", "status": "success"}]])
+def test_readonly_details_accepts_task_arrays_without_inferring_publication(
+    tmp_path, monkeypatch, tasks
+):
+    import json
+
+    from fabu.diagnostics import ReadOnlyCli
+    from fabu.tools import CommandResult
+
+    exe = tmp_path / "yxer.exe"
+    exe.write_bytes(b"not executable")
+    config = tmp_path / "auth.json"
+    config.write_text("{}")
+    monkeypatch.setattr(
+        "fabu.diagnostics.run_command",
+        lambda spec, cancel: CommandResult(
+            exit_code=0,
+            stdout=json.dumps({"ok": True, "version": "3.2.32", "data": tasks}).encode(),
+            stderr=b"",
+        ),
+    )
+    assert ReadOnlyCli(exe, config, tmp_path).details("existing-task-set") == tasks
+
+
+@pytest.mark.parametrize("data", [["not-an-object"], [{}] * 1001, None])
+def test_readonly_details_rejects_malformed_or_excessive_task_arrays(tmp_path, monkeypatch, data):
+    import json
+
+    from fabu.diagnostics import ReadOnlyCli
+    from fabu.tools import CommandResult
+
+    exe = tmp_path / "yxer.exe"
+    exe.write_bytes(b"not executable")
+    config = tmp_path / "auth.json"
+    config.write_text("{}")
+    monkeypatch.setattr(
+        "fabu.diagnostics.run_command",
+        lambda spec, cancel: CommandResult(
+            exit_code=0,
+            stdout=json.dumps({"ok": True, "version": "3.2.32", "data": data}).encode(),
+            stderr=b"",
+        ),
+    )
+    with pytest.raises(ValueError):
+        ReadOnlyCli(exe, config, tmp_path).details("existing-task-set")

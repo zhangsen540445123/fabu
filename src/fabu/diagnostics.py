@@ -95,13 +95,20 @@ class ReadOnlyCli:
             raise ValueError("Category query did not return canonical evidence")
         return raw["data"]
 
-    def details(self, provider_task_id: str) -> dict:
+    def details(self, provider_task_id: str) -> dict | list[dict]:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}", provider_task_id):
             raise ValueError("Invalid existing provider task identifier")
         raw = self._execute(["query", "details", provider_task_id, "--json"], True)
-        if raw.get("ok") is not True or not isinstance(raw.get("data"), dict):
+        data = raw.get("data")
+        if raw.get("ok") is not True or not isinstance(data, (dict, list)):
             raise ValueError("Details query did not return usable data")
-        return raw["data"]
+        if isinstance(data, list) and (
+            len(data) > 1000 or any(not isinstance(task, dict) for task in data)
+        ):
+            raise ValueError("Details query returned invalid or excessive task rows")
+        # Preserve the transport shape, not a publication verdict. The evidence adapter
+        # must still bind each task to an account, resources and platform content.
+        return data
 
     def _execute(self, args, needs_config):
         if self.executable is None:
