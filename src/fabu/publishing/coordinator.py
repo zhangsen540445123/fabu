@@ -353,16 +353,43 @@ class PublicationCoordinator:
                 )
         return None
 
-    def run_submission(self, job_id, permit, publisher, *, verification=None, controlled_gate=None):
+    def run_submission(
+        self,
+        job_id,
+        permit,
+        publisher,
+        *,
+        verification=None,
+        controlled_gate=None,
+        production_report=None,
+    ):
         def preflight_problem(snapshot, report):
-            controlled = bool(
-                verification is not None
-                and controlled_gate is not None
-                and verification.authority is self.authority
-                and verification.allow_controlled(controlled_gate, permit, snapshot, report)
-            )
-            if controlled_gate is not None and not controlled:
-                return "controlled_gate_invalid"
+            trusted = verification is not None and verification.authority is self.authority
+            controlled = False
+            if permit.kind == "controlled_test":
+                controlled = bool(
+                    trusted
+                    and controlled_gate is not None
+                    and production_report is None
+                    and verification.allow_controlled(controlled_gate, permit, snapshot, report)
+                )
+                if not controlled:
+                    return "controlled_gate_invalid"
+            elif permit.kind == "verified":
+                mode = "native_schedule" if snapshot.mode == "native_schedule" else "immediate"
+                if (
+                    not trusted
+                    or controlled_gate is not None
+                    or production_report is None
+                    or not verification.grant_production_mode(
+                        production_report, list(permit.target_ids), mode
+                    )
+                ):
+                    return "production_grant_invalid"
+            elif controlled_gate is not None or production_report is not None:
+                return "execution_authorization_mismatch"
+            # Current read-only preflight still has to pass; a prior verified report is
+            # provenance, not permission to skip today's accounts/quota/schedule checks.
             return self._preflight_problem(snapshot, report, controlled=controlled)
 
         self._owner()

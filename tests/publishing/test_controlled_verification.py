@@ -595,3 +595,149 @@ def test_approval_from_another_verifier_process_is_not_a_grant(verification_cont
     assert not VerificationService(service.store, authority).grant_production_mode(
         result, list(permit.target_ids), "immediate"
     )
+
+
+@pytest.mark.parametrize("kind", ["controlled_test", "verified"])
+def test_supported_flags_cannot_replace_execution_provenance(
+    publishing_context, verification_context, kind
+):
+    from fabu.publishing.coordinator import PublicationCoordinator
+    from fabu.publishing.fake_gateway import FakePublisher
+    from fabu.worker import Worker
+
+    service, authority, snapshot, _ = verification_context
+    store, assets, presets, approvals = publishing_context[:4]
+    job = store.get(snapshot.job_id)
+    with store.transaction() as db:
+        db.execute(
+            "UPDATE jobs SET spec_json=? WHERE id=?",
+            (job.spec.model_copy(update={"publish_mode": "immediate"}).model_dump_json(), job.id),
+        )
+    permit = authority.issue(
+        snapshot,
+        kind=kind,
+        expires_at=authority.clock() + timedelta(minutes=2),
+        max_uploads=2,
+        max_submissions_per_target=1,
+        allow_temporary_storage_upload=True,
+        authorization_note="Synthetic provenance regression; never a real publisher",
+    )
+    calls = []
+
+    class UnsupportedProvenance:
+        execution_scope = "live"
+
+        def preflight(self, snap):
+            return (
+                FakePublisher(authority)
+                .preflight(snap)
+                .model_copy(update={"tool_version": "3.2.32"})
+            )
+
+        def prepare(self, *args):
+            calls.append("prepare")
+            raise ValueError("Synthetic boundary; must never be reached")
+
+    with Worker(store) as worker:
+        coordinator = PublicationCoordinator(store, assets, presets, approvals, authority, worker)
+        coordinator.register(snapshot, "live")
+        result = coordinator.run_submission(job.id, permit, UnsupportedProvenance())
+    assert result.state == "PAUSED"
+    assert calls == []
+    assert not store.attempts(job.id)
+    with store.connection() as db:
+        assert not db.execute("SELECT 1 FROM publication_source_claims").fetchone()
+        assert not db.execute("SELECT 1 FROM upload_attempts").fetchone()
+
+
+@pytest.mark.parametrize(
+    "grant_case",
+    [
+        "valid",
+        "missing",
+        "edited",
+        "new_service",
+        "expired",
+        "current_unknown",
+        "current_paid",
+        "current_stale",
+    ],
+)
+def test_verified_execution_requires_a_live_verifier_grant(
+    publishing_context, verification_context, grant_case
+):
+    from test_workflow import ready_clone
+
+    from fabu.publishing.coordinator import PublicationCoordinator
+    from fabu.publishing.fake_gateway import FakePublisher
+    from fabu.publishing.verification import VerificationService
+    from fabu.worker import Worker
+
+    service, authority, old_snapshot, old_permit = verification_context
+    identifiers = [
+        service.record(old_permit, old_snapshot, v) for v in complete_evidence(verification_context)
+    ]
+    approved = service.verify_controlled_run(old_permit, old_snapshot, identifiers)
+    assert service.grant_production_mode(approved, list(old_permit.target_ids), "immediate")
+    store, assets, presets, approvals = publishing_context[:4]
+    job = store.create(
+        publishing_context[4].spec.model_copy(
+            update={
+                "source_url": "https://youtu.be/Z6imSiJLd9Q",
+                "publish_mode": "immediate",
+            }
+        )
+    )
+    ready_clone(publishing_context, job.model_dump(mode="json"))
+    job = store.get(job.id)
+    context = (*publishing_context[:4], job, *publishing_context[5:])
+    snapshot = build(context)
+    if grant_case == "expired":
+        expired = authority.clock() + timedelta(minutes=6)
+        authority.clock = lambda: expired
+    permit = authority.issue(
+        snapshot,
+        kind="verified",
+        expires_at=authority.clock() + timedelta(minutes=2),
+        max_uploads=2,
+        max_submissions_per_target=1,
+        allow_temporary_storage_upload=True,
+        authorization_note="Synthetic new job, existing verified grant; no network",
+    )
+    if grant_case == "missing":
+        approved = None
+    if grant_case == "edited":
+        approved = approved.model_copy(update={"evidence_refs": ["fabricated"]})
+    if grant_case == "new_service":
+        service = VerificationService(store, authority)
+    calls = []
+
+    class LocalOnly:
+        execution_scope = "live"
+
+        def preflight(self, snap):
+            current = FakePublisher(authority).preflight(snap)
+            if grant_case == "current_unknown":
+                current = current.model_copy(update={"quota": "UNKNOWN"})
+            elif grant_case == "current_paid":
+                current = current.model_copy(update={"payment_required": True})
+            elif grant_case == "current_stale":
+                current = current.model_copy(
+                    update={"checked_at": authority.clock() - timedelta(minutes=10)}
+                )
+            return current
+
+        def prepare(self, *args):
+            calls.append("prepare")
+            # Stop at the synthetic boundary: this test proves entry authorization only.
+            raise ValueError("No actual upload in a provenance test")
+
+    with Worker(store) as worker:
+        coordinator = PublicationCoordinator(store, assets, presets, approvals, authority, worker)
+        coordinator.register(snapshot, "live")
+        result = coordinator.run_submission(
+            job.id, permit, LocalOnly(), verification=service, production_report=approved
+        )
+    assert result.state == "PAUSED"
+    assert calls == (["prepare"] if grant_case == "valid" else [])
+    assert not store.attempts(job.id)

@@ -666,7 +666,10 @@ def test_existing_live_attempt_can_be_queried_without_unlocking_writes(
     )
 
 
-def test_details_readonly_command_is_literal_and_cannot_invoke_write(tmp_path, monkeypatch):
+@pytest.mark.parametrize("provider_id", ["known-id", "task.part:123", "x" * 256])
+def test_details_readonly_command_is_literal_and_cannot_invoke_write(
+    tmp_path, monkeypatch, provider_id
+):
     import json
 
     from fabu.diagnostics import ReadOnlyCli
@@ -686,8 +689,8 @@ def test_details_readonly_command_is_literal_and_cannot_invoke_write(tmp_path, m
 
     monkeypatch.setattr("fabu.diagnostics.run_command", run)
     reader = ReadOnlyCli(exe, config, tmp_path)
-    assert reader.details("known-id") == {}
-    assert calls == [["query", "details", "known-id", "--json"]]
+    assert reader.details(provider_id) == {}
+    assert calls == [["query", "details", provider_id, "--json"]]
     with pytest.raises(ValueError):
         reader.details("--publish")
     assert len(calls) == 1

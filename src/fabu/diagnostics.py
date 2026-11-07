@@ -96,7 +96,7 @@ class ReadOnlyCli:
         return raw["data"]
 
     def details(self, provider_task_id: str) -> dict:
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", provider_task_id):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}", provider_task_id):
             raise ValueError("Invalid existing provider task identifier")
         raw = self._execute(["query", "details", provider_task_id, "--json"], True)
         if raw.get("ok") is not True or not isinstance(raw.get("data"), dict):

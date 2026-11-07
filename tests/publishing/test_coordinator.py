@@ -28,6 +28,20 @@ def scope(authority, snapshot):
     )
 
 
+def controlled_verification(store, authority, snapshot, permit):
+    from test_controlled_verification import safety
+
+    from fabu.publishing.verification import VerificationService
+
+    service = VerificationService(store, authority)
+    context = (service, authority, snapshot, permit)
+    evidence = service.record(permit, snapshot, safety(context))
+    return {
+        "verification": service,
+        "controlled_gate": service.controlled_gate(permit, snapshot, evidence),
+    }
+
+
 def test_failure_stops_remaining_targets(publishing_context, coordination):
     from fabu.publishing.fake_gateway import FakePublisher
 
@@ -598,7 +612,11 @@ def test_live_first_attempt_freezes_shared_content_before_transport(
         calls = []
 
         def preflight(self, snap):
-            return FakePublisher(authority).preflight(snap)
+            return (
+                FakePublisher(authority)
+                .preflight(snap)
+                .model_copy(update={"tool_version": "3.2.32"})
+            )
 
         def prepare(self, snap, permit):
             values = tuple(
@@ -628,7 +646,12 @@ def test_live_first_attempt_freezes_shared_content_before_transport(
         max_submissions_per_target=1,
         authorization_note="Synthetic DB-only live semantics",
     )
-    coordinator.run_submission(snapshot.job_id, permit, publisher)
+    coordinator.run_submission(
+        snapshot.job_id,
+        permit,
+        publisher,
+        **controlled_verification(store, authority, snapshot, permit),
+    )
     frozen = store.get(snapshot.job_id)
     assert frozen.content_frozen and frozen.state == "PAUSED" and len(publisher.calls) == 1
     with pytest.raises(ValueError):
@@ -662,7 +685,11 @@ def test_live_complete_is_a_distinct_terminal_job_state(publishing_context, coor
         execution_scope = "live"
 
         def preflight(self, snap):
-            return FakePublisher(authority).preflight(snap)
+            return (
+                FakePublisher(authority)
+                .preflight(snap)
+                .model_copy(update={"tool_version": "3.2.32"})
+            )
 
         def prepare(self, snap, permit):
             values = tuple(
@@ -700,7 +727,12 @@ def test_live_complete_is_a_distinct_terminal_job_state(publishing_context, coor
         max_submissions_per_target=1,
         authorization_note="Synthetic DB-only terminal test",
     )
-    complete = coordinator.run_submission(snapshot.job_id, permit, LocalFake())
+    complete = coordinator.run_submission(
+        snapshot.job_id,
+        permit,
+        LocalFake(),
+        **controlled_verification(store, authority, snapshot, permit),
+    )
     assert complete.state == "COMPLETED" and complete.content_frozen
 
 
