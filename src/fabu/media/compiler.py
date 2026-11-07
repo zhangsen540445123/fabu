@@ -223,3 +223,17 @@ def compile_plan(bundle: InputBundle, preset: PresetVersion) -> MediaPlan:
         asset_media=bundle.asset_media,
     )
     return plan.model_copy(update={"digest": plan_digest(plan)})
+
+
+def bind_tool_identity(plan, preset, identity):
+    from fabu.media.models import compatibility_version
+
+    bound = plan.model_copy(update={"tool_identity": dict(identity)})
+    bound = bound.model_copy(
+        update={
+            "preset_digest": semantic_fingerprint(
+                preset, bound.asset_hashes, compatibility_version(bound)
+            )
+        }
+    )
+    return bound.model_copy(update={"digest": plan_digest(bound)})

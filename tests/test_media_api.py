@@ -140,3 +140,84 @@ def test_paused_task_can_choose_new_preset_as_new_content_revision(app):
     assert response.json()["content_revision"] == 2
     assert response.json()["spec"]["preset_version_id"] == changed["id"]
     assert response.json()["output_manifest"] is None
+
+
+def test_source_revision_uses_independent_checkpoint_directory(app, tmp_path, monkeypatch):
+    from threading import Event
+
+    from fabu.domain import JobSpec
+    from fabu.media.bootstrap import configured_service
+
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "ffmpeg.exe").write_bytes(b"synthetic")
+    (tools / "ffprobe.exe").write_bytes(b"synthetic")
+    node = tmp_path / "node.exe"
+    node.write_bytes(b"synthetic")
+    app.state.settings = app.state.settings.model_copy(
+        update={"tools_dir": tools, "node_path": node}
+    )
+    job = app.state.store.create(
+        JobSpec(
+            source_url="https://youtu.be/L6imSiJLd9Q",
+            title="剪发",
+            preset_version_id=app.state.default_preset.id,
+        )
+    )
+    seen = []
+
+    def capture(video_id, workspace, *args, **kwargs):
+        seen.append((video_id, workspace))
+        return None
+
+    monkeypatch.setattr("fabu.media.bootstrap.download_source", capture)
+    service = configured_service(app, Event())
+    service.source_loader(job)
+    revised = app.state.store.revise(
+        job.id,
+        job.revision,
+        job.spec.model_copy(update={"source_url": "https://youtu.be/Z6imSiJLd9Q"}),
+    )
+    service.source_loader(revised)
+    assert seen[0][1] != seen[1][1]
+    assert seen[0][0] in str(seen[0][1]) and seen[1][0] in str(seen[1][1])
+
+
+def test_bulk_assets_follow_media_drive_and_legacy_library_is_preserved(app, tmp_path):
+    from fabu.api.app import create_app
+    from fabu.assets import AssetStore
+
+    client, headers = login(app)
+    image = tmp_path / "cover.png"
+    Image.new("RGB", (10, 10), "blue").save(image)
+    result = client.post(
+        "/api/assets", json={"path": str(image), "media_type": "image"}, headers=headers
+    )
+    ref = app.state.assets.get(result.json()["id"])
+    assert ref.local_path.parent == app.state.settings.data_dir / "assets"
+    legacy = AssetStore(app.state.settings.state_dir / "assets", app.state.store).import_file(
+        image, "image"
+    )
+    before = legacy.local_path.read_bytes()
+    restarted = create_app(app.state.settings, app.state.store)
+    assert restarted.state.assets.verify(legacy.id)
+    assert legacy.local_path.read_bytes() == before
+    assert restarted.state.assets.root == app.state.settings.data_dir / "assets"
+
+
+def test_changing_empty_media_directory_rebinds_asset_library(app, tmp_path):
+    client, headers = login(app)
+    new = tmp_path / "new-media"
+    assert (
+        client.put("/api/settings", json={"data_dir": str(new)}, headers=headers).status_code == 200
+    )
+    assert app.state.assets.root == new / "assets"
+    image = tmp_path / "cover.png"
+    Image.new("RGB", (10, 10), "blue").save(image)
+    client.post("/api/assets", json={"path": str(image), "media_type": "image"}, headers=headers)
+    assert (
+        client.put(
+            "/api/settings", json={"data_dir": str(tmp_path / "again")}, headers=headers
+        ).status_code
+        == 409
+    )

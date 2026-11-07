@@ -42,6 +42,8 @@ class SelectedFormat(BaseModel):
     height: int
     fps: float
     estimated_bytes: int | None = None
+    audio_language: str | None = None
+    audio_selection: str = "single_track"
 
 
 class SourceManifest(BaseModel):
@@ -88,6 +90,23 @@ def choose_formats(metadata: dict) -> SelectedFormat:
         for f in rows
         if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")
     ]
+    # yt-dlp's pinned YouTube extractor marks original=10, default=5. A default dub
+    # must never outrank the original merely because it has a higher audio bitrate.
+    audio_rows = [f for f in rows if f.get("acodec") not in (None, "none")]
+    original = [f for f in audio_rows if f.get("language_preference") == 10]
+    languages = {f.get("language") for f in audio_rows if f.get("language")}
+    selection = "original" if original else "single_track"
+    if not original and len(languages) > 1:
+        raise SourceUnavailable("Ambiguous audio languages; original soundtrack needs review")
+    selected_languages = {f.get("language") for f in original if f.get("language")}
+    if len(selected_languages) > 1:
+        raise SourceUnavailable("Ambiguous original audio tracks")
+    if original:
+        allowed = {f["format_id"] for f in original}
+        audios = [f for f in audios if f["format_id"] in allowed]
+        videos = [
+            f for f in videos if f.get("acodec") in (None, "none") or f["format_id"] in allowed
+        ]
     if not videos:
         raise SourceUnavailable("No supported non-DRM video format is available")
     videos = [f for f in videos if audios or f.get("acodec") not in (None, "none")]
@@ -128,6 +147,8 @@ def choose_formats(metadata: dict) -> SelectedFormat:
         height=video["height"],
         fps=_number(video.get("fps")),
         estimated_bytes=int(sum(sizes)) if all(sizes) else None,
+        audio_language=(audio or video).get("language"),
+        audio_selection=selection,
     )
 
 

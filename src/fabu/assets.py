@@ -108,7 +108,14 @@ def _check_content(path: Path, media_type: str, extension: str) -> None:
 
 
 class AssetStore:
-    def __init__(self, root: Path, store: JobStore):
+    def __init__(self, root: Path, store: JobStore, *, legacy_roots: tuple[Path, ...] = ()):
+        if any(not p.is_absolute() for p in legacy_roots):
+            raise ValueError("Legacy asset roots must be absolute")
+        self.legacy_roots = tuple(Path(os.path.abspath(p)) for p in legacy_roots)
+        for legacy in self.legacy_roots:
+            if not legacy.is_absolute():
+                raise ValueError("Legacy asset roots must be absolute")
+            assert_no_reparse(legacy)
         if not root.is_absolute():
             raise ValueError("Asset root must be absolute")
         assert_no_reparse(root)
@@ -119,7 +126,7 @@ class AssetStore:
     def _safe_managed_path(self, path: Path) -> Path:
         assert_no_reparse(self.root)
         assert_no_reparse(path)
-        if path.parent != self.root:
+        if path.parent not in (self.root, *self.legacy_roots):
             raise ValueError("Asset path escapes the managed library")
         return path
 

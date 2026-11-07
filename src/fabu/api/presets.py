@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 from fabu.assets import MediaType
-from fabu.media.models import ENGINE_VERSION, OutputProfile
+from fabu.media.models import OutputProfile
 from fabu.media.registry import PARAM_SCHEMAS, validate_steps
 from fabu.presets import PresetDocument
 
@@ -127,7 +127,9 @@ def list_presets(request: Request):
                 if s.enabled
                 for a in s.asset_ids
             }
-            approved = request.app.state.approvals.approval_matches(version, refs, ENGINE_VERSION)
+            approved = request.app.state.approvals.approval_matches(
+                version, refs, request.app.state.approvals.current_engine()
+            )
         except (KeyError, ValueError, OSError):
             approved = False
         result.append({"version": version, "approved": approved})

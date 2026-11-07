@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from fabu.assets import AssetRef, AssetStore
 from fabu.media.compiler import semantic_fingerprint
-from fabu.media.models import ENGINE_VERSION, PlanInvalid
+from fabu.media.models import ENGINE_VERSION, PlanInvalid, compatibility_version, tool_compatibility
 from fabu.media.preview import PREVIEW_MAX_AGE, PreviewManifest, verify_preview
 from fabu.presets import PresetStore, PresetVersion
 from fabu.store import JobStore
@@ -23,10 +23,20 @@ class PreviewApproval(BaseModel):
 
 
 class PreviewApprovalStore:
-    def __init__(self, store: JobStore, presets: PresetStore, assets: AssetStore):
+    def __init__(
+        self, store: JobStore, presets: PresetStore, assets: AssetStore, *, current_tools=None
+    ):
+        self.current_tools = current_tools
         self.store = store
         self.presets = presets
         self.assets = assets
+
+    def current_engine(self):
+        return tool_compatibility(self.current_tools()) if self.current_tools else ENGINE_VERSION
+
+    def _check_tools(self, plan):
+        if self.current_tools and plan.tool_identity != self.current_tools():
+            raise PlanInvalid("Preview media tool build is no longer current")
 
     def _key(self, preset: PresetVersion, assets: dict[str, AssetRef], engine: str) -> str:
         used = {a for step in preset.steps if step.enabled for a in step.asset_ids}
@@ -43,10 +53,11 @@ class PreviewApprovalStore:
     def record_preview(self, manifest: PreviewManifest, preset_version_id: str) -> None:
         verify_preview(manifest)
         preset = self.presets.get_version(preset_version_id)
+        self._check_tools(manifest.plan)
         if (
             manifest.plan.engine_version != ENGINE_VERSION
             or manifest.plan.preset_digest
-            != self._key(preset, manifest.plan.asset_refs, ENGINE_VERSION)
+            != self._key(preset, manifest.plan.asset_refs, compatibility_version(manifest.plan))
         ):
             raise PlanInvalid("Preview is not for this preset or compatible engine")
         with self.store.transaction() as db:
@@ -95,20 +106,27 @@ class PreviewApprovalStore:
             raise PlanInvalid("Preview expired; generate and inspect a fresh sample")
         verify_preview(manifest)
         preset = self.presets.get_version(row["preset_version_id"])
-        key = self._key(preset, manifest.plan.asset_refs, ENGINE_VERSION)
+        self._check_tools(manifest.plan)
+        key = self._key(preset, manifest.plan.asset_refs, compatibility_version(manifest.plan))
         if key != manifest.plan.preset_digest or manifest.plan.engine_version != ENGINE_VERSION:
             raise PlanInvalid("Preview is stale for this preset or engine")
         approval = PreviewApproval(
             id=str(uuid4()),
             preview_id=identifier,
             semantic_digest=key,
-            engine_version=ENGINE_VERSION,
+            engine_version=compatibility_version(manifest.plan),
             approved_at=now,
         )
         with self.store.transaction() as db:
             db.execute(
                 "INSERT OR IGNORE INTO preview_approvals VALUES (?,?,?,?,?)",
-                (approval.id, identifier, key, ENGINE_VERSION, now.isoformat()),
+                (
+                    approval.id,
+                    identifier,
+                    key,
+                    compatibility_version(manifest.plan),
+                    now.isoformat(),
+                ),
             )
             stored = db.execute(
                 "SELECT * FROM preview_approvals WHERE preview_id=?", (identifier,)
@@ -119,6 +137,8 @@ class PreviewApprovalStore:
         self, preset: PresetVersion, assets: dict[str, AssetRef], engine_compat_version: str
     ) -> bool:
         try:
+            if self.current_tools and engine_compat_version != self.current_engine():
+                return False
             key = self._key(preset, assets, engine_compat_version)
         except (ValueError, KeyError, OSError):
             return False

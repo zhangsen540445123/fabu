@@ -527,3 +527,30 @@ def test_readonly_category_command_is_literal_and_bounded(tmp_path, monkeypatch)
     with pytest.raises(ValueError):
         reader.categories("--upload")
     assert len(calls) == 1
+
+
+def test_submitted_targets_can_refresh_final_state_without_resubmission(
+    publish_app, publishing_context
+):
+    import threading
+
+    from fabu.worker import Worker
+
+    client, headers = login(publish_app)
+    run = prepare_api(client, headers, publishing_context)
+    queue = publish_app.state.publication_queue
+    queue.enqueue(queue.get_run(run["snapshot_digest"], "simulation"), "submit")
+    with Worker(publishing_context[0]) as worker:
+        queue.process_next(worker, threading.Event(), lambda **state: None)
+        public = client.get(f"/api/jobs/{run['job_id']}/targets").json()
+        assert public["can_reconcile"] and not public["can_submit"]
+        publisher = next(iter(queue._publishers.values()))
+        before = len([c for c in publisher.calls if c[0] == "submit"])
+        publisher.receipts = {
+            k: v.model_copy(update={"state": "PUBLISHED"}) for k, v in publisher.receipts.items()
+        }
+        queue.enqueue(queue.get_run(run["snapshot_digest"], "simulation"), "reconcile")
+        queue.process_next(worker, threading.Event(), lambda **state: None)
+        final = client.get(f"/api/jobs/{run['job_id']}/targets").json()
+        assert [t["state"] for t in final["targets"]] == ["PUBLISHED"] * 3
+        assert len([c for c in publisher.calls if c[0] == "submit"]) == before

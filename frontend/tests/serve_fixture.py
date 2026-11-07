@@ -98,6 +98,7 @@ with tempfile.TemporaryDirectory(prefix="fabu-e2e-") as folder:
     app.state.publication_queue.publisher_factory = lambda authority, cancel: ScenarioPublisher(
         authority, outcomes=["SUBMITTED", "FAILED", "SUBMITTED"], cancel=cancel
     )
+    app.state.media_tool_identity = tools.identity
     source_ref = app.state.assets.import_file(source, "video")
     cover_ref = app.state.assets.import_file(cover, "image")
     app.state.security.bootstrap_token = "synthetic-e2e-bootstrap-not-a-real-credential"

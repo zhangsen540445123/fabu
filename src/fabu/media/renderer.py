@@ -45,6 +45,8 @@ def render(
     min_free_bytes: int = 256 * 1024 * 1024,
 ) -> Path:
     verify_plan_digest(plan)
+    if plan.tool_identity:
+        tools.validate_plan_tools(plan)
     if cancel.is_set():
         raise RenderFailed("Rendering canceled before start")
     if not workspace.is_absolute():

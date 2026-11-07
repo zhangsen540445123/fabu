@@ -36,6 +36,8 @@ $Project = 'C:\Users\77465\.codex\worktrees\fabu-v1\auto-deploy'
 - 默认状态目录：`%LOCALAPPDATA%\Fabu`；默认媒体目录：`D:\FabuData\jobs`。
 - 可向脚本显式传`-StateDir`、`-DataDir`、`-ToolsDir`、`-NodePath`、`-Port`。自定义状态目录/端口后，停止脚本也须传相同参数。
 - 在网页“运行设置”保存的工具/媒体路径优先于启动默认值。检查报告会显示生效路径，不会假定你机器上有某个预安装程序。
+- 大视频/素材库放在媒体目录下的`assets`；旧版本状态目录下的素材保留可读，不自动移动或删除。已有素材或任务时不支持在设置中直接迁移媒体盘。
+- 预览审批绑定FFmpeg/ffprobe二进制摘要；更换工具后应创建新内容版本并重新检查样片。
 - 凭证位于当前用户DPAPI保护的本地文件；临时CLI配置只允许当前用户与SYSTEM。不要将状态目录加入Git或发给他人。
 - 私有进程身份记录：`<状态目录>\runtime\owner.dpapi`；精简启动日志：`<状态目录>\runtime\runtime.log`。
 - 不自动下载/更新工具，不更改电源策略，不强制开关机。电脑休眠会暂停本地工作。

@@ -233,3 +233,56 @@ def test_metadata_size_preflight_rejects_before_download(tmp_path, monkeypatch):
             thumbnail_transport=lambda _: None,
         )
     assert len(calls) == 1
+
+
+def test_original_audio_wins_over_higher_bitrate_dub():
+    from fabu.media.source import choose_formats
+
+    data = format_fixture()
+    audio = data["formats"][-1]
+    data["formats"] = [
+        *data["formats"][:-1],
+        {**audio, "format_id": "original", "abr": 128, "language": "hi", "language_preference": 10},
+        {**audio, "format_id": "dub", "abr": 192, "language": "en", "language_preference": 5},
+    ]
+    chosen = choose_formats(data)
+    assert chosen.audio_format_id == "original"
+    assert chosen.audio_language == "hi" and chosen.audio_selection == "original"
+
+
+def test_multiple_audio_languages_without_original_marker_pause():
+    from fabu.media.source import SourceUnavailable, choose_formats
+
+    data = format_fixture()
+    audio = data["formats"][-1]
+    data["formats"] = [
+        *data["formats"][:-1],
+        {**audio, "format_id": "hi", "language": "hi"},
+        {**audio, "format_id": "en", "language": "en"},
+    ]
+    with pytest.raises(SourceUnavailable, match="audio"):
+        choose_formats(data)
+
+
+def test_muxed_dub_does_not_override_original_separate_audio():
+    from fabu.media.source import choose_formats
+
+    data = format_fixture()
+    audio = data["formats"][-1]
+    data["formats"].append(
+        {
+            "format_id": "muxed-dub",
+            "width": 2560,
+            "height": 1440,
+            "fps": 30,
+            "vcodec": "avc1",
+            "acodec": "aac",
+            "tbr": 99999,
+            "language": "en",
+            "language_preference": 5,
+        }
+    )
+    audio.update(language="hi", language_preference=10)
+    chosen = choose_formats(data)
+    assert "muxed-dub" not in chosen.selector
+    assert chosen.audio_format_id == audio["format_id"]

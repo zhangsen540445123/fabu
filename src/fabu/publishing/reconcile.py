@@ -121,7 +121,8 @@ def reconcile_pending(store, publisher, *, worker, run_id=None):
             "SELECT a.*,r.snapshot_json,r.scope FROM target_attempts a "
             "JOIN publication_attempt_links l ON l.attempt_id=a.id JOIN publication_runs r "
             "ON r.id=l.run_id "
-            "WHERE a.state IN ('SUBMITTING','PROVIDER_ACCEPTED','UNKNOWN') AND (? IS NULL "
+            "WHERE a.state IN ('SUBMITTING','PROVIDER_ACCEPTED','UNKNOWN','SUBMITTED','SCHEDULED') "
+            "AND (? IS NULL "
             "OR r.id=?)",
             (run_id, run_id),
         ).fetchall()

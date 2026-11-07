@@ -177,3 +177,28 @@ def test_configured_credential_status_never_returns_secret_or_client_id(app):
     response = client.get("/api/settings")
     assert response.json()["credentials"] == {"configured": True}
     assert "synthetic-private" not in response.text
+
+
+def test_existing_job_can_update_tools_when_data_directory_is_unchanged(app, tmp_path):
+    client, headers = login(app)
+    client.post("/api/jobs", json=payload(app), headers=headers)
+    settings = client.get("/api/settings").json()
+    node = tmp_path / "node.exe"
+    node.write_bytes(b"synthetic")
+    result = client.put(
+        "/api/settings",
+        headers=headers,
+        json={
+            "data_dir": settings["data_dir"],
+            "tools_dir": str(tmp_path / "new-tools"),
+            "node_path": str(node),
+        },
+    )
+    assert result.status_code == 200
+    assert result.json()["node_path"] == str(node)
+    assert (
+        client.put(
+            "/api/settings", headers=headers, json={"data_dir": str(tmp_path / "other-media")}
+        ).status_code
+        == 409
+    )

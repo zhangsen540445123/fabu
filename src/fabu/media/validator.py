@@ -56,6 +56,8 @@ def validate_output(
 ) -> OutputManifest:
     if cancel is not None and cancel.is_set():
         raise OutputInvalid("Output validation canceled")
+    if plan.tool_identity:
+        tools.validate_plan_tools(plan)
 
     def probe(args):
         return tools.probe(args, cancel)

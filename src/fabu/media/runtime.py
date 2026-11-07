@@ -1,12 +1,20 @@
 """Explicit tool binding; no PATH search, automatic download or runtime updates."""
 
 import os
+from functools import lru_cache
 from pathlib import Path
 from threading import Event
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from fabu.assets import assert_no_reparse, sha256_file
+from fabu.media.models import PlanInvalid
 from fabu.tools import CommandResult, CommandSpec, run_command
+
+
+@lru_cache(maxsize=32)
+def _tool_hash(path: Path, size: int, modified: int, changed: int):
+    return sha256_file(path)
 
 
 class MediaTools(BaseModel):
@@ -20,6 +28,22 @@ class MediaTools(BaseModel):
         if not path.is_absolute() or not path.is_file() or path.suffix.lower() != ".exe":
             raise ValueError("Select an existing absolute media tool .exe path")
         return path
+
+    def identity(self, *, force=False):
+        result = {}
+        for name, path in [("ffmpeg", self.ffmpeg_path), ("ffprobe", self.ffprobe_path)]:
+            assert_no_reparse(path)
+            stat = path.stat()
+            result[name] = (
+                sha256_file(path)
+                if force
+                else _tool_hash(path, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            )
+        return result
+
+    def validate_plan_tools(self, plan):
+        if plan.tool_identity and self.identity(force=True) != plan.tool_identity:
+            raise PlanInvalid("Media tool build changed; recompile and confirm a fresh preview")
 
     def _run(
         self,

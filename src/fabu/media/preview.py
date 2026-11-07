@@ -290,6 +290,8 @@ def build_preview(
     cancel: Event | None = None,
 ) -> PreviewManifest:
     verify_plan_digest(plan)
+    if plan.tool_identity:
+        tools.validate_plan_tools(plan)
     _verify_inputs(plan)
     selected = normalize_windows(plan, default_windows(plan) if windows is None else windows)
     key = hashlib.sha256(

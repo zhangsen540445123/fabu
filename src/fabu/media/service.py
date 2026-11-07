@@ -10,13 +10,14 @@ from uuid import uuid4
 from fabu.assets import AssetStore, assert_no_reparse, sha256_file
 from fabu.domain import JobSnapshot
 from fabu.media.approvals import PreviewApprovalStore
-from fabu.media.compiler import compile_plan
+from fabu.media.compiler import bind_tool_identity, compile_plan
 from fabu.media.models import (
     ENGINE_VERSION,
     InputBundle,
     MediaPlan,
     OutputManifest,
     PlanInvalid,
+    compatibility_version,
     verify_plan_digest,
 )
 from fabu.media.probe import probe_media
@@ -187,8 +188,9 @@ class MediaService:
             plan = compile_plan(
                 InputBundle(source=info, assets=refs, asset_media=auxiliary), preset
             )
+            plan = bind_tool_identity(plan, preset, self.tools.identity(force=True))
             job = self._plan_checkpoint(job, source, plan)
-            if not self.approvals.approval_matches(preset, refs, ENGINE_VERSION):
+            if not self.approvals.approval_matches(preset, refs, compatibility_version(plan)):
                 raise ProcessingPaused("preview_required")
             job = self.store.transition(job.id, job.revision, "PROCESSING", None)
             stage = "render_failed"
@@ -248,7 +250,7 @@ def require_approved_job_output(
     plan = load_job_plan(store, job.id)
     preset = presets.get_version(current.spec.preset_version_id)
     if plan.engine_version != ENGINE_VERSION or not approvals.approval_matches(
-        preset, plan.asset_refs, ENGINE_VERSION
+        preset, plan.asset_refs, compatibility_version(plan)
     ):
         raise PlanInvalid("The media preset has no compatible preview approval")
     output = OutputManifest.model_validate(current.output_manifest)

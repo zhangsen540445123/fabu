@@ -50,6 +50,7 @@ class MediaPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     digest: str
     engine_version: str = ENGINE_VERSION
+    tool_identity: dict[str, str] = Field(default_factory=dict)
     source: MediaInfo
     source_hash: str
     preset_digest: str | None = None
@@ -105,3 +106,18 @@ class InputBundle(BaseModel):
     source: MediaInfo
     assets: dict[str, AssetRef] = Field(default_factory=dict)
     asset_media: dict[str, MediaInfo] = Field(default_factory=dict)
+
+
+def compatibility_version(plan: MediaPlan) -> str:
+    return tool_compatibility(plan.tool_identity, plan.engine_version)
+
+
+def tool_compatibility(identity: dict[str, str], engine=ENGINE_VERSION) -> str:
+    if not identity:
+        return engine
+    if set(identity) != {"ffmpeg", "ffprobe"} or any(
+        len(v) != 64 or any(c not in "0123456789abcdef" for c in v) for v in identity.values()
+    ):
+        raise PlanInvalid("Media tool fingerprint is invalid")
+    digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    return engine + ":" + digest

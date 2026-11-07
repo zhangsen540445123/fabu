@@ -280,6 +280,9 @@ def public_run(store, run):
         and not resource_blocked
         and not source_conflict
         and not failed_without_retry,
-        "can_reconcile": needs_reconcile and not active,
+        "can_reconcile": (
+            needs_reconcile or any(t["state"] in {"SUBMITTED", "SCHEDULED"} for t in targets)
+        )
+        and not active,
         "command": dict(command) if command else None,
     }

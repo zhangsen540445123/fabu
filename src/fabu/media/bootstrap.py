@@ -24,7 +24,7 @@ def configured_service(app, cancel: Event) -> MediaService:
         runner = YtDlpRunner(Path(sys.executable), settings.node_path, tools.ffmpeg_path, cancel)
         return download_source(
             parse_youtube_url(job.spec.source_url),
-            settings.data_dir / "downloads" / job.id,
+            settings.data_dir / "downloads" / job.id / parse_youtube_url(job.spec.source_url),
             runner,
             assets=app.state.assets,
             probe_runner=lambda args: tools.probe(args, cancel),

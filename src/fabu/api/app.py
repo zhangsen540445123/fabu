@@ -26,6 +26,7 @@ from fabu.diagnostics import ReadOnlyCli
 from fabu.media.approvals import PreviewApprovalStore
 from fabu.media.bootstrap import configured_service
 from fabu.media.controller import MediaController
+from fabu.media.runtime import MediaTools
 from fabu.presets import PresetStore
 from fabu.publishing.capabilities import CapabilityReport
 from fabu.publishing.journal import SqliteUploadJournal
@@ -71,9 +72,20 @@ def create_app(
     app.state.settings_lock = threading.Lock()
     app.state.store = store
     app.state.security = LocalSecurity(settings.port)
-    app.state.assets = AssetStore(settings.state_dir / "assets", store)
+    app.state.assets = AssetStore(
+        settings.data_dir / "assets", store, legacy_roots=(settings.state_dir / "assets",)
+    )
     app.state.presets = PresetStore(store, app.state.assets)
-    app.state.approvals = PreviewApprovalStore(store, app.state.presets, app.state.assets)
+    app.state.media_tool_identity = lambda: MediaTools(
+        ffmpeg_path=app.state.settings.tools_dir / "ffmpeg.exe",
+        ffprobe_path=app.state.settings.tools_dir / "ffprobe.exe",
+    ).identity()
+    app.state.approvals = PreviewApprovalStore(
+        store,
+        app.state.presets,
+        app.state.assets,
+        current_tools=lambda: app.state.media_tool_identity(),
+    )
     app.state.credentials = CredentialStore(settings.state_dir / "credentials")
     app.state.readonly_cli_factory = ReadOnlyCli
 
@@ -186,12 +198,27 @@ def create_app(
     def update_settings(patch: SettingsPatch):
         with app.state.settings_lock:
             changes = patch.model_dump(exclude_none=True)
-            if "data_dir" in changes and store.list_jobs(limit=1):
-                raise HTTPException(409, "Data directory changes require no existing tasks")
+            with store.connection() as db:
+                has_assets = db.execute("SELECT 1 FROM assets LIMIT 1").fetchone() is not None
+            if (
+                "data_dir" in changes
+                and changes["data_dir"] != app.state.settings.data_dir
+                and (store.list_jobs(limit=1) or has_assets)
+            ):
+                raise HTTPException(
+                    409, "Data directory changes require no existing tasks or assets"
+                )
             try:
                 candidate = Settings.model_validate({**app.state.settings.model_dump(), **changes})
             except ValueError as exc:
                 raise HTTPException(422, "Invalid local settings") from exc
+            new_assets = None
+            if candidate.data_dir != app.state.settings.data_dir:
+                new_assets = AssetStore(
+                    candidate.data_dir / "assets",
+                    store,
+                    legacy_roots=(candidate.state_dir / "assets",),
+                )
             persisted = SettingsPatch(
                 node_path=candidate.node_path,
                 data_dir=candidate.data_dir,
@@ -202,6 +229,10 @@ def create_app(
             temporary.write_text(persisted.model_dump_json(), encoding="utf-8")
             os.replace(temporary, patch_path)
             app.state.settings = candidate
+            if new_assets is not None:
+                app.state.assets = new_assets
+                app.state.presets.assets = new_assets
+                app.state.approvals.assets = new_assets
             app.state.media_controller.preview_root = candidate.data_dir / "previews"
             app.state.media_controller.wake()
             return get_settings()

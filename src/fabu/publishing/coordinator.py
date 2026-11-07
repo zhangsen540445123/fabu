@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fabu.assets import assert_no_reparse, sha256_file
 from fabu.domain import TargetAttempt
-from fabu.media.models import ENGINE_VERSION
+from fabu.media.models import ENGINE_VERSION, compatibility_version
 from fabu.media.service import load_job_plan
 from fabu.publishing.capabilities import can_enable_mode
 from fabu.publishing.gateway import SubmissionReceipt, verify_prepared
@@ -148,7 +148,7 @@ class PublicationCoordinator:
         plan = load_job_plan(self.store, job.id)
         preset = self.presets.get_version(job.spec.preset_version_id)
         if plan.engine_version != ENGINE_VERSION or not self.approvals.approval_matches(
-            preset, plan.asset_refs, ENGINE_VERSION
+            preset, plan.asset_refs, compatibility_version(plan)
         ):
             raise ValueError("Publication preset approval is no longer valid")
         for item in [snapshot.output, snapshot.cover]:
